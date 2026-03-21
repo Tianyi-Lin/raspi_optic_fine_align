@@ -912,17 +912,21 @@ class CircleTrackerGUI:
         if not ae_changed and not exposure_changed and not gain_changed:
             return
         
-        # 自动曝光开关变化时，先设置AeEnable
-        if ae_changed:
-            self.picam2.set_controls({"AeEnable": bool(ae_enable)})
-        
-        # 自动曝光关闭时，才手动设置曝光值和增益
+        # 自动曝光关闭时，同时设置AeEnable和曝光参数
         if not ae_enable:
-            if exposure_changed or gain_changed or ae_changed:
-                self.picam2.set_controls({
-                    "ExposureValue": float(exposure), 
-                    "AnalogueGain": float(gain)
-                })
+            controls = {}
+            if ae_changed:
+                controls["AeEnable"] = False
+            if exposure_changed or ae_changed:
+                controls["ExposureValue"] = float(exposure)
+            if gain_changed or ae_changed:
+                controls["AnalogueGain"] = float(gain)
+            if controls:
+                self.picam2.set_controls(controls)
+        else:
+            # 自动曝光开启时，只设置AeEnable
+            if ae_changed:
+                self.picam2.set_controls({"AeEnable": True})
         
         self.last_ae_enable = ae_enable
         self.last_exposure = exposure
