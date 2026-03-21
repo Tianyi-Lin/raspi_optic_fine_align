@@ -130,6 +130,11 @@ class CircleTrackerGUI:
         self.y_bias = tk.IntVar(value=0)
         self.camera_fps = tk.IntVar(value=60)
         self.status_text = tk.StringVar(value="就绪")
+        
+        # 激光指示对准配置
+        self.laser_align_mode = tk.BooleanVar(value=False) # False:盲对准, True:指示对准
+        self.laser_threshold = tk.IntVar(value=240)        # 激光二值化阈值
+        
         # 舵机角度范围配置（角度制）
         self.pan_min = tk.DoubleVar(value=-90.0)
         self.pan_max = tk.DoubleVar(value=90.0)
@@ -195,6 +200,8 @@ class CircleTrackerGUI:
             "x_bias": 0,
             "y_bias": 0,
             "camera_fps": 60,
+            "laser_align_mode": False,
+            "laser_threshold": 240,
             "pan_min": -90.0,
             "pan_max": 90.0,
             "tilt_min": -90.0,
@@ -257,6 +264,8 @@ class CircleTrackerGUI:
                 "x_bias": safe_int(self.x_bias, "x_bias"),
                 "y_bias": safe_int(self.y_bias, "y_bias"),
                 "camera_fps": safe_int(self.camera_fps, "camera_fps"),
+                "laser_align_mode": safe_bool(self.laser_align_mode),
+                "laser_threshold": safe_int(self.laser_threshold, "laser_threshold"),
                 "pan_min": safe_float(self.pan_min, "pan_min"),
                 "pan_max": safe_float(self.pan_max, "pan_max"),
             "tilt_min": safe_float(self.tilt_min, "tilt_min"),
@@ -350,6 +359,8 @@ class CircleTrackerGUI:
             "x_bias": safe_int(self.x_bias, "x_bias"),
             "y_bias": safe_int(self.y_bias, "y_bias"),
             "camera_fps": safe_int(self.camera_fps, "camera_fps"),
+            "laser_align_mode": safe_bool(self.laser_align_mode, "laser_align_mode"),
+            "laser_threshold": safe_int(self.laser_threshold, "laser_threshold"),
             "pan_min": safe_float(self.pan_min, "pan_min"),
             "pan_max": safe_float(self.pan_max, "pan_max"),
             "tilt_min": safe_float(self.tilt_min, "tilt_min"),
@@ -458,6 +469,9 @@ class CircleTrackerGUI:
                 "max_radius": int(self.max_radius.get()),
                 "x_bias": int(self.x_bias.get()),
                 "y_bias": int(self.y_bias.get()),
+                "camera_fps": int(self.camera_fps.get()),
+                "laser_align_mode": bool(self.laser_align_mode.get()),
+                "laser_threshold": int(self.laser_threshold.get()),
                 "pan_min": float(self.pan_min.get()),
                 "pan_max": float(self.pan_max.get()),
                 "tilt_min": float(self.tilt_min.get()),
@@ -643,6 +657,14 @@ class CircleTrackerGUI:
         rv2 = self._grid_slider(right_vis, rv2, 0, "模糊核大小", self.ksize, 3, 19)
         rv2 = self._grid_slider(right_vis, rv2, 0, "X偏置", self.x_bias, -200, 200)
         rv2 = self._grid_slider(right_vis, rv2, 0, "Y偏置", self.y_bias, -200, 200)
+        
+        # 激光指示对准配置
+        ttk.Separator(right_vis, orient=tk.HORIZONTAL).grid(row=rv2, column=0, columnspan=2, sticky="ew", pady=10)
+        rv2 += 1
+        ttk.Checkbutton(right_vis, text="启用激光指示对准 (找最亮光斑)", variable=self.laser_align_mode).grid(row=rv2, column=0, columnspan=2, sticky="w", pady=(0, 5))
+        rv2 += 1
+        rv2 = self._grid_slider(right_vis, rv2, 0, "光斑二值化阈值", self.laser_threshold, 100, 255)
+        ttk.Label(right_vis, text="大于该亮度的像素将被视为光斑", font=("", 8), foreground="gray", wraplength=180).grid(row=rv2-1, column=0, columnspan=2, sticky="w")
 
         tab_camera.columnconfigure(0, weight=1)
         cam = ttk.Frame(tab_camera)
@@ -830,8 +852,38 @@ class CircleTrackerGUI:
                 
                 self.kalman.update_params(s["kalman_process_noise"], s["kalman_measurement_noise"])
 
-                error_x = float(center_x) - target_x
-                error_y = float(center_y) - target_y
+                # 处理激光对准逻辑
+                # 盲对准 (False): 将相机中心 (center_x, center_y) 对准圆心 target_x
+                # 指示对准 (True): 将激光光斑 (laser_spot) 对准圆心 target_x
+                laser_spot_display = None
+                if s.get("laser_align_mode", False) and green_data is not None:
+                    # 寻找激光光斑
+                    blurred_green, _, _, scale = green_data
+                    _, binary = cv2.threshold(blurred_green, s.get("laser_threshold", 240), 255, cv2.THRESH_BINARY)
+                    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary, connectivity=8)
+                    
+                    if num_labels > 1:
+                        # 找到最大的连通域（排除背景0）
+                        largest_label = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+                        cx, cy = centroids[largest_label]
+                        
+                        # 转换回原图坐标
+                        laser_x = cx / scale
+                        laser_y = cy / scale
+                        laser_spot_display = (laser_x, laser_y)
+                        
+                        # 在指示对准模式下，误差 = 激光点坐标 - 圆心坐标
+                        error_x = laser_x - target_x
+                        error_y = laser_y - target_y
+                    else:
+                        # 如果开启了指示对准但没找到激光点，保持不动
+                        error_x = 0.0
+                        error_y = 0.0
+                else:
+                    # 默认盲对准：相机中心对准目标圆心
+                    error_x = float(center_x) - target_x
+                    error_y = float(center_y) - target_y
+
                 deadband = float(s["deadband"])
                 if abs(error_x) < deadband:
                     error_x = 0.0
@@ -911,6 +963,7 @@ class CircleTrackerGUI:
 
                 # Picamera2 RGB888 is actually BGR layout [B,G,R]; keep as-is for OpenCV (BGR)
                 # and convert to RGB only once for display
+
                 self._draw_overlay(
                     frame=frame_rgb,
                     center=(center_x, center_y),
@@ -921,6 +974,7 @@ class CircleTrackerGUI:
                     error=(error_x, error_y),
                     dt=dt,
                     bounds=(pan_at_min, pan_at_max, tilt_at_min, tilt_at_max),
+                    laser_spot=laser_spot_display,
                 )
                 
                 # 创建双屏显示：原图 + 绿色通道处理图
@@ -958,6 +1012,14 @@ class CircleTrackerGUI:
                         x, y, r = int(round(x)), int(round(y)), int(round(r))
                         cv2.circle(full_green, (x, y), 3, (255, 0, 0), -1)  # 红心
                         cv2.circle(full_green, (x, y), r, (255, 0, 0), 2)   # 红圈
+                        
+                    # 在绿色通道图上标注识别到的激光光斑
+                    if laser_spot_display is not None:
+                        lx, ly = int(round(laser_spot_display[0])), int(round(laser_spot_display[1]))
+                        # 用醒目的黄色十字星标注光斑位置
+                        cv2.line(full_green, (lx-10, ly), (lx+10, ly), (255, 255, 0), 2)
+                        cv2.line(full_green, (lx, ly-10), (lx, ly+10), (255, 255, 0), 2)
+                        cv2.putText(full_green, "Laser", (lx+10, ly-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
                     
                     # 在图上添加文字说明
                     cv2.putText(full_green, "Green Channel (Processed)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
