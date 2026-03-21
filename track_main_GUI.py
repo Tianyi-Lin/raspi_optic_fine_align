@@ -569,9 +569,9 @@ class CircleTrackerGUI:
         kalman_frame.columnconfigure(1, weight=1)
         rk = 0
         rk = self._grid_slider(kalman_frame, rk, 0, "过程噪声(运动不可预测性)", self.kalman_process_noise, 0.001, 0.5)
-        ttk.Label(kalman_frame, text="越小:平滑但延迟大; 越大:响应快但易抖动", font=("", 8), foreground="gray").grid(row=rk-1, column=2, sticky="w", padx=(6, 0))
+        ttk.Label(kalman_frame, text="越小:平滑但延迟大; 越大:响应快但易抖动", font=("", 8), foreground="gray", wraplength=180).grid(row=rk-1, column=2, sticky="w", padx=(6, 0))
         rk = self._grid_slider(kalman_frame, rk, 0, "测量噪声(检测结果不稳定性)", self.kalman_measurement_noise, 0.01, 5.0)
-        ttk.Label(kalman_frame, text="越大:平滑防抖强; 越小:极度信任视觉检测", font=("", 8), foreground="gray").grid(row=rk-1, column=2, sticky="w", padx=(6, 0))
+        ttk.Label(kalman_frame, text="越大:平滑防抖强; 越小:极度信任视觉检测", font=("", 8), foreground="gray", wraplength=180).grid(row=rk-1, column=2, sticky="w", padx=(6, 0))
 
         # 舵机范围配置
         servo_range = ttk.LabelFrame(tab_pid, text="舵机角度范围", padding=8)
