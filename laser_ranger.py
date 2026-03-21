@@ -1,55 +1,101 @@
-#coding: UTF-8
-import serial 
+# coding: UTF-8
+import serial
 import time
 import threading
 import tkinter as tk
 from tkinter import ttk
 import collections
+from datetime import datetime
 
-# 为了绘图导入 matplotlib
 import matplotlib
 matplotlib.use("TkAgg")
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
-class LaserRanger:
-    def __init__(self, port='/dev/ttyAMA2', baudrate=115200):
+
+class LaserRangerMonitor:
+    """
+    适配 NLink_TOFSense_Frame0 UART 主动输出模式
+    帧格式（16字节）：
+    Byte 0   : 0x57
+    Byte 1   : Function Mark = 0x00
+    Byte 2   : reserved
+    Byte 3   : id
+    Byte 4-7 : system_time(uint32, little endian)
+    Byte 8-10: distance*1000(uint24, little endian), 单位 mm
+    Byte 11  : dis_status(uint8)
+    Byte 12-13: signal_strength(uint16, little endian)
+    Byte 14  : range_precision(uint8), 单位 cm
+    Byte 15  : checksum = sum(byte[0:15]) % 256
+    """
+
+    def __init__(self, port="/dev/ttyAMA2", baudrate=115200, history_len=500):
         self.port = port
         self.baudrate = baudrate
         self.serial = None
         self.running = False
         self.read_thread = None
-        
-        # 协议常量
-        self.TOF_length = 16
-        self.TOF_header = (87, 0, 255)
-        
-        # 数据存储
+
+        # 协议
+        self.FRAME_LEN = 16
+        self.HEADER = 0x57
+        self.FRAME0_FUNC = 0x00
+
+        # 当前解析出的信息
+        self.frame_header = 0
+        self.function_mark = 0
+        self.reserved0 = 0
+        self.module_id = 0
+        self.system_time_ms = 0
         self.distance_mm = -1.0
-        self.status = 0
-        self.signal = 0
-        
-        # 绘图用数据队列（最多存最近100个点）
-        self.time_data = collections.deque(maxlen=100)
-        self.dist_data = collections.deque(maxlen=100)
+        self.distance_m = -1.0
+        self.dis_status = 0
+        self.valid = 0
+        self.signal_strength = 0
+        self.range_precision_cm = 0
+        self.checksum_ok = False
+        self.last_checksum = 0
+        self.last_update_str = "-"
+        self.last_raw_packet = ""
+
+        # 统计
+        self.rx_frames = 0
+        self.bad_checksum_frames = 0
+
+        # 时序数据
         self.start_time = time.time()
+        self.time_data = collections.deque(maxlen=history_len)
+        self.distance_m_data = collections.deque(maxlen=history_len)
+        self.signal_data = collections.deque(maxlen=history_len)
+        self.status_data = collections.deque(maxlen=history_len)
+        self.valid_data = collections.deque(maxlen=history_len)
+        self.precision_data = collections.deque(maxlen=history_len)
 
         try:
             self.serial = serial.Serial(self.port, self.baudrate, timeout=0.5)
-            self.serial.flushInput()
-            print(f"[LaserRanger] 已连接串口 {self.port}")
+            self.serial.reset_input_buffer()
+            print(f"[LaserRangerMonitor] 已连接串口 {self.port}")
         except Exception as e:
-            print(f"[LaserRanger] 串口连接失败: {e}")
+            print(f"[LaserRangerMonitor] 串口连接失败: {e}")
 
-    def verify_checksum(self, data, length):
-        tof_check = 0
-        for k in range(0, length - 1):
-            tof_check += data[k]
-        tof_check = tof_check % 256
-        return tof_check == data[length - 1]
+    def verify_checksum(self, data):
+        return (sum(data[:-1]) % 256) == data[-1]
+
+    def packet_to_hex(self, packet):
+        return " ".join(f"{b:02X}" for b in packet)
+
+    def status_to_valid(self, dis_status):
+        """
+        这里先按工程习惯做一个简单映射：
+        dis_status == 1 -> 有效
+        其他 -> 无效
+        如果你后面确认你这个模块的 UART status 含义不同，再改这里即可。
+        """
+        return 1 if dis_status == 1 else 0
 
     def start(self):
         if self.serial is None or not self.serial.is_open:
+            print("[LaserRangerMonitor] 串口未打开，无法启动")
             return
         self.running = True
         self.read_thread = threading.Thread(target=self._read_loop, daemon=True)
@@ -61,140 +107,305 @@ class LaserRanger:
             self.read_thread.join(timeout=1.0)
         if self.serial is not None and self.serial.is_open:
             self.serial.close()
+            print("[LaserRangerMonitor] 串口已关闭")
 
     def _read_loop(self):
-        # 缓存区，用于拼接不完整的数据包
         buffer = []
+
         while self.running and self.serial and self.serial.is_open:
             try:
-                # 每次尽可能多读
                 waiting = self.serial.in_waiting
                 if waiting > 0:
                     raw_data = self.serial.read(waiting)
                     buffer.extend(list(raw_data))
-                    
-                    # 寻找包头 87 0 255
-                    while len(buffer) >= self.TOF_length:
-                        # 查找包头位置
+
+                    while len(buffer) >= self.FRAME_LEN:
+                        # 找帧头
                         header_idx = -1
-                        for i in range(len(buffer) - 2):
-                            if buffer[i] == self.TOF_header[0] and \
-                               buffer[i+1] == self.TOF_header[1] and \
-                               buffer[i+2] == self.TOF_header[2]:
+                        for i in range(len(buffer)):
+                            if buffer[i] == self.HEADER:
                                 header_idx = i
                                 break
-                                
+
                         if header_idx == -1:
-                            # 没找到包头，保留最后两个字节（可能是残缺的包头），其他丢弃
-                            buffer = buffer[-2:]
+                            buffer.clear()
                             break
-                            
-                        # 如果包头后的数据不够一个完整包，等待下次读取
-                        if len(buffer) - header_idx < self.TOF_length:
+
+                        if len(buffer) - header_idx < self.FRAME_LEN:
                             buffer = buffer[header_idx:]
                             break
-                            
-                        # 提取一个完整包
-                        packet = buffer[header_idx : header_idx + self.TOF_length]
-                        # 移除已经处理过的数据（包括包头之前的无用数据）
-                        buffer = buffer[header_idx + self.TOF_length :]
-                        
-                        if self.verify_checksum(packet, self.TOF_length):
-                            signal = packet[12] | (packet[13] << 8)
-                            if signal == 0:
-                                # print("Out of range!")
-                                pass
-                            else:
-                                distance = packet[8] | (packet[9] << 8) | (packet[10] << 16)
-                                self.distance_mm = float(distance)
-                                self.status = packet[11]
-                                self.signal = signal
-                                
-                                # 记录绘图数据
-                                current_t = time.time() - self.start_time
-                                self.time_data.append(current_t)
-                                self.dist_data.append(self.distance_mm)
+
+                        packet = buffer[header_idx: header_idx + self.FRAME_LEN]
+                        buffer = buffer[header_idx + self.FRAME_LEN:]
+
+                        # 只接收 Frame0 主动输出帧
+                        if packet[0] != self.HEADER or packet[1] != self.FRAME0_FUNC:
+                            continue
+
+                        self.rx_frames += 1
+                        self.last_raw_packet = self.packet_to_hex(packet)
+                        self.last_checksum = packet[-1]
+
+                        checksum_ok = self.verify_checksum(packet)
+                        self.checksum_ok = checksum_ok
+                        if not checksum_ok:
+                            self.bad_checksum_frames += 1
+                            continue
+
+                        # 解析
+                        self.frame_header = packet[0]
+                        self.function_mark = packet[1]
+                        self.reserved0 = packet[2]
+                        self.module_id = packet[3]
+
+                        self.system_time_ms = (
+                            packet[4]
+                            | (packet[5] << 8)
+                            | (packet[6] << 16)
+                            | (packet[7] << 24)
+                        )
+
+                        self.distance_mm = float(
+                            packet[8]
+                            | (packet[9] << 8)
+                            | (packet[10] << 16)
+                        )
+                        self.distance_m = self.distance_mm / 1000.0
+
+                        self.dis_status = packet[11]
+                        self.valid = self.status_to_valid(self.dis_status)
+
+                        self.signal_strength = packet[12] | (packet[13] << 8)
+                        self.range_precision_cm = packet[14]
+
+                        self.last_update_str = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+
+                        t = time.time() - self.start_time
+                        self.time_data.append(t)
+                        self.distance_m_data.append(self.distance_m)
+                        self.signal_data.append(self.signal_strength)
+                        self.status_data.append(self.dis_status)
+                        self.valid_data.append(self.valid)
+                        self.precision_data.append(self.range_precision_cm)
                 else:
                     time.sleep(0.01)
+
             except Exception as e:
-                print(f"[LaserRanger] 读取错误: {e}")
+                print(f"[LaserRangerMonitor] 读取错误: {e}")
                 time.sleep(0.1)
 
-class LaserGUI:
-    def __init__(self, root, ranger):
+
+class MonitorGUI:
+    def __init__(self, root, monitor: LaserRangerMonitor):
         self.root = root
-        self.ranger = ranger
-        self.root.title("激光测距实时监控")
-        self.root.geometry("800x600")
+        self.monitor = monitor
+        self.root.title("TOF Laser Ranger Monitor / UART ttyAMA2")
+        self.root.geometry("1300x950")
 
-        # 顶部状态显示
-        self.info_var = tk.StringVar()
-        self.info_var.set("等待数据...")
-        self.lbl_info = ttk.Label(self.root, textvariable=self.info_var, font=("Arial", 16, "bold"))
-        self.lbl_info.pack(pady=10)
+        self._build_top_info_panel()
+        self._build_plot_panel()
 
-        # 绘图区域
-        self.fig = Figure(figsize=(8, 5), dpi=100)
-        self.ax = self.fig.add_subplot(111)
-        self.ax.set_title("Real-time Distance")
-        self.ax.set_xlabel("Time (s)")
-        self.ax.set_ylabel("Distance (mm)")
-        self.ax.grid(True)
-        
-        self.line, = self.ax.plot([], [], 'b-', linewidth=2)
+        self.update_gui()
 
-        self.canvas = FigureCanvasTkAgg(self.fig, master=self.root)
+    def _build_top_info_panel(self):
+        top_frame = ttk.Frame(self.root)
+        top_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=10)
+
+        title = ttk.Label(
+            top_frame,
+            text="TOF 激光测距监控面板（UART /dev/ttyAMA2）",
+            font=("Arial", 16, "bold")
+        )
+        title.pack(anchor="w", pady=(0, 8))
+
+        info_frame = ttk.Frame(top_frame)
+        info_frame.pack(fill=tk.X)
+
+        self.info_vars = {}
+
+        fields = [
+            ("串口", "port"),
+            ("波特率", "baudrate"),
+            ("帧头", "frame_header"),
+            ("功能码", "function_mark"),
+            ("保留字节", "reserved0"),
+            ("模块ID", "module_id"),
+            ("System Time (ms)", "system_time_ms"),
+            ("距离 (mm)", "distance_mm"),
+            ("距离 (m)", "distance_m"),
+            ("状态 Status", "dis_status"),
+            ("是否有效 Valid", "valid"),
+            ("信号强度 Signal", "signal_strength"),
+            ("精度 Precision (cm)", "range_precision_cm"),
+            ("校验通过", "checksum_ok"),
+            ("接收帧数", "rx_frames"),
+            ("校验失败帧数", "bad_checksum_frames"),
+            ("最近更新时间", "last_update_str"),
+            ("最近原始帧", "last_raw_packet"),
+        ]
+
+        for i, (label_text, key) in enumerate(fields):
+            row = i // 2
+            col = (i % 2) * 2
+
+            ttk.Label(info_frame, text=label_text + "：", font=("Arial", 11, "bold")).grid(
+                row=row, column=col, sticky="nw", padx=5, pady=3
+            )
+
+            var = tk.StringVar(value="-")
+            self.info_vars[key] = var
+
+            ttk.Label(
+                info_frame,
+                textvariable=var,
+                font=("Consolas", 11),
+                wraplength=500,
+                justify="left"
+            ).grid(row=row, column=col + 1, sticky="nw", padx=5, pady=3)
+
+        for c in range(4):
+            info_frame.columnconfigure(c, weight=1)
+
+    def _build_plot_panel(self):
+        plot_frame = ttk.Frame(self.root)
+        plot_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        self.fig = Figure(figsize=(12, 10), dpi=100)
+
+        self.ax_dist = self.fig.add_subplot(511)
+        self.ax_signal = self.fig.add_subplot(512, sharex=self.ax_dist)
+        self.ax_status = self.fig.add_subplot(513, sharex=self.ax_dist)
+        self.ax_valid = self.fig.add_subplot(514, sharex=self.ax_dist)
+        self.ax_precision = self.fig.add_subplot(515, sharex=self.ax_dist)
+
+        self.ax_dist.set_title("Distance (m)")
+        self.ax_dist.set_ylabel("m")
+        self.ax_dist.grid(True)
+
+        self.ax_signal.set_title("Signal Strength")
+        self.ax_signal.set_ylabel("signal")
+        self.ax_signal.grid(True)
+
+        self.ax_status.set_title("Status")
+        self.ax_status.set_ylabel("status")
+        self.ax_status.grid(True)
+
+        self.ax_valid.set_title("Valid")
+        self.ax_valid.set_ylabel("valid")
+        self.ax_valid.grid(True)
+
+        self.ax_precision.set_title("Range Precision (cm)")
+        self.ax_precision.set_ylabel("cm")
+        self.ax_precision.set_xlabel("Time (s)")
+        self.ax_precision.grid(True)
+
+        self.line_dist, = self.ax_dist.plot([], [], linewidth=2, label="Distance")
+        self.line_signal, = self.ax_signal.plot([], [], linewidth=2, label="Signal")
+        self.line_status, = self.ax_status.plot([], [], linewidth=2, label="Status")
+        self.line_valid, = self.ax_valid.plot([], [], linewidth=2, label="Valid")
+        self.line_precision, = self.ax_precision.plot([], [], linewidth=2, label="Precision")
+
+        for ax in [self.ax_dist, self.ax_signal, self.ax_status, self.ax_valid, self.ax_precision]:
+            ax.legend(loc="upper left")
+
+        self.canvas = FigureCanvasTkAgg(self.fig, master=plot_frame)
         self.canvas.draw()
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-        # 定时器更新
-        self.update_plot()
+    def _set_info(self):
+        m = self.monitor
 
-    def update_plot(self):
-        if len(self.ranger.time_data) > 0:
-            times = list(self.ranger.time_data)
-            dists = list(self.ranger.dist_data)
-            
-            # 更新状态文字
-            latest_dist = dists[-1]
-            self.info_var.set(f"当前距离: {latest_dist:.1f} mm | 信号强度: {self.ranger.signal}")
-            
-            # 更新曲线
-            self.line.set_xdata(times)
-            self.line.set_ydata(dists)
-            
-            # 动态调整坐标轴范围
-            self.ax.set_xlim(max(0, times[-1] - 10), times[-1] + 1) # 显示最近10秒
-            
-            min_d = min(dists)
-            max_d = max(dists)
-            margin = max(10, (max_d - min_d) * 0.1)
-            self.ax.set_ylim(max(0, min_d - margin), max_d + margin)
-            
-            self.canvas.draw_idle()
-            
-        self.root.after(50, self.update_plot) # 50ms 刷新一次
+        self.info_vars["port"].set(m.port)
+        self.info_vars["baudrate"].set(str(m.baudrate))
+        self.info_vars["frame_header"].set(f"0x{m.frame_header:02X}")
+        self.info_vars["function_mark"].set(f"0x{m.function_mark:02X}")
+        self.info_vars["reserved0"].set(f"0x{m.reserved0:02X}")
+        self.info_vars["module_id"].set(str(m.module_id))
+        self.info_vars["system_time_ms"].set(str(m.system_time_ms))
+        self.info_vars["distance_mm"].set(f"{m.distance_mm:.1f}" if m.distance_mm >= 0 else "-")
+        self.info_vars["distance_m"].set(f"{m.distance_m:.3f}" if m.distance_m >= 0 else "-")
+        self.info_vars["dis_status"].set(str(m.dis_status))
+        self.info_vars["valid"].set("1 (有效)" if m.valid == 1 else "0 (无效)")
+        self.info_vars["signal_strength"].set(str(m.signal_strength))
+        self.info_vars["range_precision_cm"].set(str(m.range_precision_cm))
+        self.info_vars["checksum_ok"].set("True" if m.checksum_ok else "False")
+        self.info_vars["rx_frames"].set(str(m.rx_frames))
+        self.info_vars["bad_checksum_frames"].set(str(m.bad_checksum_frames))
+        self.info_vars["last_update_str"].set(m.last_update_str)
+        self.info_vars["last_raw_packet"].set(m.last_raw_packet)
+
+    def _set_plots(self):
+        m = self.monitor
+        if len(m.time_data) == 0:
+            return
+
+        x = list(m.time_data)
+        y_dist = list(m.distance_m_data)
+        y_signal = list(m.signal_data)
+        y_status = list(m.status_data)
+        y_valid = list(m.valid_data)
+        y_precision = list(m.precision_data)
+
+        self.line_dist.set_xdata(x)
+        self.line_dist.set_ydata(y_dist)
+
+        self.line_signal.set_xdata(x)
+        self.line_signal.set_ydata(y_signal)
+
+        self.line_status.set_xdata(x)
+        self.line_status.set_ydata(y_status)
+
+        self.line_valid.set_xdata(x)
+        self.line_valid.set_ydata(y_valid)
+
+        self.line_precision.set_xdata(x)
+        self.line_precision.set_ydata(y_precision)
+
+        x_min = max(0, x[-1] - 15)
+        x_max = x[-1] + 0.5
+        self.ax_dist.set_xlim(x_min, x_max)
+
+        # Distance
+        dmin, dmax = min(y_dist), max(y_dist)
+        dmargin = max(0.05, (dmax - dmin) * 0.1 if dmax > dmin else 0.1)
+        self.ax_dist.set_ylim(max(0, dmin - dmargin), dmax + dmargin)
+
+        # Signal
+        smin, smax = min(y_signal), max(y_signal)
+        smargin = max(10, (smax - smin) * 0.1 if smax > smin else 10)
+        self.ax_signal.set_ylim(max(0, smin - smargin), smax + smargin)
+
+        # Status
+        stmin, stmax = min(y_status), max(y_status)
+        stmargin = max(1, (stmax - stmin) * 0.1 if stmax > stmin else 1)
+        self.ax_status.set_ylim(stmin - stmargin, stmax + stmargin)
+
+        # Valid
+        self.ax_valid.set_ylim(-0.2, 1.2)
+
+        # Precision
+        pmin, pmax = min(y_precision), max(y_precision)
+        pmargin = max(1, (pmax - pmin) * 0.1 if pmax > pmin else 1)
+        self.ax_precision.set_ylim(max(0, pmin - pmargin), pmax + pmargin)
+
+        self.canvas.draw_idle()
+
+    def update_gui(self):
+        self._set_info()
+        self._set_plots()
+        self.root.after(100, self.update_gui)
+
 
 if __name__ == "__main__":
-    ranger = LaserRanger(port='/dev/ttyAMA2', baudrate=115200)
-    ranger.start()
+    monitor = LaserRangerMonitor(port="/dev/ttyAMA2", baudrate=115200, history_len=500)
+    monitor.start()
 
     root = tk.Tk()
-    app = LaserGUI(root, ranger)
-    
-    def on_closing():
-        ranger.stop()
+    gui = MonitorGUI(root, monitor)
+
+    def on_close():
+        monitor.stop()
         root.destroy()
-        
-    root.protocol("WM_DELETE_WINDOW", on_closing)
+
+    root.protocol("WM_DELETE_WINDOW", on_close)
     root.mainloop()
-          
-         
-    
-        
-    
-
-
-
-
-
