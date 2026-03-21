@@ -576,14 +576,16 @@ class CircleTrackerGUI:
         # 舵机范围配置
         servo_range = ttk.LabelFrame(tab_pid, text="舵机角度范围", padding=8)
         servo_range.pack(fill=tk.X, pady=(10, 0))
-        servo_range.columnconfigure(0, weight=1)
-        servo_range.columnconfigure(1, weight=1)
+        # 让两列平均分配宽度
+        servo_range.columnconfigure(0, weight=1, uniform="col")
+        servo_range.columnconfigure(1, weight=1, uniform="col")
         r3 = 0
-        r3 = self._grid_slider(servo_range, r3, 0, "水平最小", self.pan_min, -90.0, 0.0)
-        r3 = self._grid_slider(servo_range, r3, 1, "水平最大", self.pan_max, 0.0, 90.0)
-        r3 += 1
-        r3 = self._grid_slider(servo_range, r3, 0, "俯仰最小", self.tilt_min, -90.0, 0.0)
-        r3 = self._grid_slider(servo_range, r3, 1, "俯仰最大", self.tilt_max, 0.0, 90.0)
+        # 修改 _grid_slider 的调用方式，让它在半宽中正常显示
+        r3 = self._grid_slider(servo_range, r3, 0, "水平最小", self.pan_min, -90.0, 0.0, colspan=1)
+        # 上一行的调用返回的是 r3+1，为了让最大和最小在同一行，我们需要把行号退回
+        self._grid_slider(servo_range, r3-1, 1, "水平最大", self.pan_max, 0.0, 90.0, colspan=1)
+        r3 = self._grid_slider(servo_range, r3, 0, "俯仰最小", self.tilt_min, -90.0, 0.0, colspan=1)
+        self._grid_slider(servo_range, r3-1, 1, "俯仰最大", self.tilt_max, 0.0, 90.0, colspan=1)
         
         # 硬件边界显示
         hw_range = ttk.LabelFrame(tab_pid, text="舵机物理边界 (硬件读取)", padding=8)
@@ -652,9 +654,9 @@ class CircleTrackerGUI:
         ttk.Label(parent, text=text).grid(row=row, column=col, sticky="w", padx=(0, 6), pady=(2, 2))
         ttk.Entry(parent, textvariable=var, width=width).grid(row=row, column=col + 1, sticky="ew", pady=(2, 2))
 
-    def _grid_slider(self, parent, row, col, text, var, low, high):
+    def _grid_slider(self, parent, row, col, text, var, low, high, colspan=2):
         frame = ttk.Frame(parent)
-        frame.grid(row=row, column=col, columnspan=2, sticky="ew", pady=(2, 6))
+        frame.grid(row=row, column=col, columnspan=colspan, sticky="ew", pady=(2, 6), padx=(0, 6 if col == 0 and colspan == 1 else 0))
         frame.columnconfigure(0, weight=1)
         header = ttk.Frame(frame)
         header.grid(row=0, column=0, sticky="ew")
