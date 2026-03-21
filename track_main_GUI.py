@@ -189,6 +189,10 @@ class CircleTrackerGUI:
         except Exception as exc:
             print(f"[WARNING] Servo init failed before GUI start: {exc}")
             
+        # 增加 100ms 延时，让舵机初始化、读取边界、回正指令彻底完成
+        # 避免与激光测距模块初始化产生串口通信干扰
+        time.sleep(0.1)
+            
         # 强制配置激光测距模块为查询模式 (Passive / Inquire)
         configure_laser_module(
             port="/dev/ttyAMA2", 
