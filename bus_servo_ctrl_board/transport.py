@@ -5,7 +5,7 @@ import serial
 
 class SerialTransport:
     """
-    适配控制板协议：
+    控制板协议：
         55 55 Length Cmd Params...
 
     其中：
@@ -13,7 +13,7 @@ class SerialTransport:
     - 整帧总长度 = Length + 2
     """
 
-    def __init__(self, port: str, baudrate: int = 9600, timeout: float = 0.5, debug: bool = False):
+    def __init__(self, port: str, baudrate: int = 9600, timeout: float = 1.0, debug: bool = False):
         self.ser = serial.Serial(
             port=port,
             baudrate=baudrate,
@@ -69,7 +69,6 @@ class SerialTransport:
             self._read_into_buffer()
             self._drop_until_header()
 
-            # 至少要有：55 55 Length
             if len(self._rx_buffer) < 3:
                 time.sleep(0.005)
                 continue
@@ -86,7 +85,6 @@ class SerialTransport:
                 self._rx_buffer.pop(0)
                 continue
 
-            # 整帧总长度 = Length + 2
             full_len = length + 2
 
             if len(self._rx_buffer) < full_len:

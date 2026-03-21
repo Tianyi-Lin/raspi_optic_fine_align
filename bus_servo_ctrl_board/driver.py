@@ -30,10 +30,22 @@ class BusServoBoardDriver:
         frame = build_frame(cmd, params)
         self.transport.write(frame)
 
-    def request(self, cmd: int, params=(), expect_cmd: Optional[int] = None, retries: int = 5):
+    def request(
+        self,
+        cmd: int,
+        params=(),
+        expect_cmd: Optional[int] = None,
+        overall_timeout: float = 0.8,
+        retries: int = 2,
+    ):
+        """
+        发一次请求后持续接收。
+        不要高频重发。
+        """
         last_err = None
+        expect = cmd if expect_cmd is None else expect_cmd
 
-        for _ in range(retries):
+        for attempt in range(retries):
             try:
                 if hasattr(self.transport, "reset_input_buffer"):
                     self.transport.reset_input_buffer()
@@ -41,21 +53,38 @@ class BusServoBoardDriver:
                 frame = build_frame(cmd, params)
                 self.transport.write(frame)
 
-                # 给控制板一点响应时间
-                time.sleep(0.02)
+                deadline = time.time() + overall_timeout
 
-                raw = self.transport.read_frame()
-                resp = parse_frame(raw)
+                while time.time() < deadline:
+                    remain = deadline - time.time()
+                    if remain <= 0:
+                        break
 
-                expect = cmd if expect_cmd is None else expect_cmd
-                if resp.cmd != expect:
-                    raise ValueError(f"unexpected cmd: {resp.cmd}, expect {expect}")
+                    old_timeout = self.transport.timeout
+                    self.transport.timeout = min(old_timeout, remain)
 
-                return resp
+                    try:
+                        raw = self.transport.read_frame()
+                    finally:
+                        self.transport.timeout = old_timeout
+
+                    resp = parse_frame(raw)
+
+                    # 混入别的帧就跳过继续等
+                    if resp.cmd != expect:
+                        continue
+
+                    return resp
+
+                last_err = TimeoutError(
+                    f"request timeout: cmd={cmd}, expect_cmd={expect}, "
+                    f"attempt={attempt + 1}/{retries}"
+                )
 
             except Exception as e:
                 last_err = e
-                time.sleep(0.05)
+
+            time.sleep(0.1)
 
         raise last_err
 
@@ -63,9 +92,6 @@ class BusServoBoardDriver:
     # 多舵机运动
     # -------------------------
     def move_servos(self, servo_positions: List[Tuple[int, int]], time_ms: int):
-        """
-        servo_positions: [(id, pos), ...]
-        """
         if not servo_positions:
             raise ValueError("servo_positions cannot be empty")
         if not (0 <= time_ms <= 0xFFFF):
@@ -140,8 +166,6 @@ class BusServoBoardDriver:
         params = [len(servo_ids), *servo_ids]
         resp = self.request(BoardCmd.CMD_MULT_SERVO_POS_READ, params)
 
-        # 返回参数格式：
-        # [count, id1, pos1L, pos1H, id2, pos2L, pos2H, ...]
         if len(resp.params) < 1:
             raise ValueError("invalid position response length")
 

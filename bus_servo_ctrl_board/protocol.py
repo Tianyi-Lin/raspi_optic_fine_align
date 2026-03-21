@@ -40,7 +40,7 @@ def build_frame(cmd: int, params: Sequence[int] = ()) -> bytes:
         if not (0 <= p <= 0xFF):
             raise ValueError(f"param byte out of range: {p}")
 
-    # 协议定义：Length = 参数个数 N + 指令 1 + Length 自己 1
+    # Length = 参数个数 N + 指令 1 + Length 自己 1
     length = len(params) + 2
     return HEADER + bytes([length, cmd, *params])
 
@@ -55,7 +55,7 @@ def parse_frame(data: bytes) -> BoardFrame:
     if length < 2:
         raise ValueError(f"invalid length: {length}")
 
-    # 整帧总长度 = Length + 2（两个帧头）
+    # 整帧总长度 = Length + 2
     expected_len = length + 2
     if len(data) != expected_len:
         raise ValueError(f"invalid frame length: expected {expected_len}, got {len(data)}")

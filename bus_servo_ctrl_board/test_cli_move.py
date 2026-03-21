@@ -14,7 +14,7 @@ def build_parser():
     parser.add_argument("--id", dest="servo_id", type=int, required=True)
     parser.add_argument("--pos", type=int, required=True, help="目标位置，0~1000")
     parser.add_argument("--time", dest="time_ms", type=int, default=500, help="运动时间 ms")
-    parser.add_argument("--timeout", type=float, default=0.5)
+    parser.add_argument("--timeout", type=float, default=1.0)
     parser.add_argument("--no-readback", action="store_true")
     parser.add_argument("--debug", action="store_true")
     return parser
@@ -42,8 +42,8 @@ def main():
         print("[INFO] 命令发送成功")
 
         if not args.no_readback:
-            # 10ms 太激进，至少等 0.3s 更稳
-            time.sleep(max(args.time_ms / 1000.0 + 0.2, 0.3))
+            # 别太激进，至少等 0.5s
+            time.sleep(max(args.time_ms / 1000.0 + 0.3, 0.5))
             current_pos = driver.read_one_position(args.servo_id)
             print(f"[INFO] 当前位置: {current_pos}")
 
