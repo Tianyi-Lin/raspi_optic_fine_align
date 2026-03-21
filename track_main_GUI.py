@@ -1024,14 +1024,21 @@ class CircleTrackerGUI:
                     # 将灰度数据放入绿色通道 (RGB顺序，索引为1)
                     green_rgb[:, :, 1] = blurred_green
                     
-                    # 如果有ROI，将其放回原尺寸的黑底图像中
+                    # 创建一个全黑的RGB图像用于放红色通道
+                    red_rgb = np.zeros((blurred_red.shape[0], blurred_red.shape[1], 3), dtype=np.uint8)
+                    # 将灰度数据放入红色通道 (RGB顺序，索引为0)
+                    red_rgb[:, :, 0] = blurred_red
+                    
+                    # 准备放置到全尺寸图中
                     full_green = np.zeros_like(frame_rgb_disp)
+                    full_red = np.zeros_like(frame_rgb_disp)
                     gh, gw = green_rgb.shape[:2]
                     
                     # 计算放回原图的位置
                     orig_w = int(gw / scale)
                     orig_h = int(gh / scale)
                     green_resized = cv2.resize(green_rgb, (orig_w, orig_h))
+                    red_resized = cv2.resize(red_rgb, (orig_w, orig_h))
                     
                     # 放入全尺寸图中
                     end_y = min(h, offset_y + orig_h)
@@ -1041,6 +1048,7 @@ class CircleTrackerGUI:
                     
                     if roi_h > 0 and roi_w > 0:
                         full_green[offset_y:end_y, offset_x:end_x] = green_resized[:roi_h, :roi_w]
+                        full_red[offset_y:end_y, offset_x:end_x] = red_resized[:roi_h, :roi_w]
                     
                     # 在绿色通道图上标注检测到的圆圈
                     if detection is not None:
@@ -1059,28 +1067,28 @@ class CircleTrackerGUI:
                     
                     # 在图上添加文字说明
                     cv2.putText(full_green, "Green Channel (Processed)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                    cv2.putText(full_red, "Red Channel (Processed)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
                     
                     # 准备二值化图像用于显示 (如果存在)
                     if laser_binary_display is not None:
                         # 激光是在红色通道找的，所以我们把它涂成红色显示
                         bin_rgb = np.zeros((laser_binary_display.shape[0], laser_binary_display.shape[1], 3), dtype=np.uint8)
-                        bin_rgb[:, :, 0] = laser_binary_display # RGB顺序，索引0是红色(由于我们要用hstack和disp拼，disp已经是RGB了)
+                        bin_rgb[:, :, 0] = laser_binary_display # RGB顺序，索引0是红色
                         
                         full_bin = np.zeros_like(frame_rgb_disp)
                         bin_resized = cv2.resize(bin_rgb, (orig_w, orig_h))
                         if roi_h > 0 and roi_w > 0:
                             full_bin[offset_y:end_y, offset_x:end_x] = bin_resized[:roi_h, :roi_w]
-                        cv2.putText(full_bin, "Laser Mask (Red Channel)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+                        cv2.putText(full_bin, "Laser Binary Mask", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
                     else:
                         full_bin = np.zeros_like(frame_rgb_disp)
-                        cv2.putText(full_bin, "Laser Mask (Disabled)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (128, 128, 128), 2)
+                        cv2.putText(full_bin, "Laser Binary (Disabled)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (128, 128, 128), 2)
                     
                     # 2x2 拼接：
                     # [ 彩色原图 ] [ 绿色通道 ]
-                    # [ 二值化图 ] [ 黑底空图 ]
-                    empty_black = np.zeros_like(frame_rgb_disp)
+                    # [ 红色通道 ] [ 二值化图 ]
                     top_row = np.hstack((frame_rgb_disp, full_green))
-                    bottom_row = np.hstack((full_bin, empty_black))
+                    bottom_row = np.hstack((full_red, full_bin))
                     frame_rgb_show = np.vstack((top_row, bottom_row))
                 else:
                     # 如果还没有处理好的图，就用黑图补齐 2x2 布局
