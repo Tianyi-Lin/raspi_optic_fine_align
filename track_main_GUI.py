@@ -231,8 +231,92 @@ class CircleTrackerGUI:
             }
 
     def _get_settings(self):
-        with self.settings_lock:
-            return dict(self.settings)
+        # 实时从GUI变量读取，确保修改立即生效
+        defaults = {
+            "port": "/dev/ttyUSB0",
+            "baudrate": 115200,
+            "pan_id": 1,
+            "tilt_id": 2,
+            "move_time_ms": 40,
+            "control_period_ms": 50,
+            "track_enabled": True,
+            "pan_enabled": True,
+            "tilt_enabled": True,
+            "kp_x": 0.0075,
+            "ki_x": 0.025,
+            "kd_x": 0.000005,
+            "kp_y": 0.0075,
+            "ki_y": 0.025,
+            "kd_y": 0.000005,
+            "deadband": 3.0,
+            "max_delta_deg_per_sec": 30.0,
+            "exposure": 0.0,
+            "gain": 8.0,
+            "ae_enable": False,
+            "ksize": 5,
+            "min_dist": 80,
+            "param1": 220,
+            "param2": 35,
+            "min_radius": 20,
+            "max_radius": 120,
+            "x_bias": 0,
+            "y_bias": 0,
+            "pan_min": -90.0,
+            "pan_max": 90.0,
+            "tilt_min": -90.0,
+            "tilt_max": 90.0,
+        }
+        def safe_int(var, key):
+            try:
+                v = var.get()
+                return int(v) if v != "" else defaults[key]
+            except Exception:
+                return defaults[key]
+        def safe_float(var, key):
+            try:
+                v = var.get()
+                return float(v) if v != "" else defaults[key]
+            except Exception:
+                return defaults[key]
+        def safe_bool(var, key):
+            try:
+                return bool(var.get())
+            except Exception:
+                return defaults[key]
+        return {
+            "port": str(self.port.get()) if self.port.get() else defaults["port"],
+            "baudrate": safe_int(self.baudrate, "baudrate"),
+            "pan_id": safe_int(self.pan_id, "pan_id"),
+            "tilt_id": safe_int(self.tilt_id, "tilt_id"),
+            "move_time_ms": safe_int(self.move_time_ms, "move_time_ms"),
+            "control_period_ms": safe_int(self.control_period_ms, "control_period_ms"),
+            "track_enabled": safe_bool(self.track_enabled, "track_enabled"),
+            "pan_enabled": safe_bool(self.pan_enabled, "pan_enabled"),
+            "tilt_enabled": safe_bool(self.tilt_enabled, "tilt_enabled"),
+            "kp_x": safe_float(self.kp_x, "kp_x"),
+            "ki_x": safe_float(self.ki_x, "ki_x"),
+            "kd_x": safe_float(self.kd_x, "kd_x"),
+            "kp_y": safe_float(self.kp_y, "kp_y"),
+            "ki_y": safe_float(self.ki_y, "ki_y"),
+            "kd_y": safe_float(self.kd_y, "kd_y"),
+            "deadband": safe_float(self.error_deadband, "deadband"),
+            "max_delta_deg_per_sec": safe_float(self.max_delta_deg_per_sec, "max_delta_deg_per_sec"),
+            "exposure": safe_float(self.exposure_value, "exposure"),
+            "gain": safe_float(self.analogue_gain, "gain"),
+            "ae_enable": safe_bool(self.ae_enable, "ae_enable"),
+            "ksize": safe_int(self.ksize, "ksize"),
+            "min_dist": safe_int(self.min_dist, "min_dist"),
+            "param1": safe_int(self.param1, "param1"),
+            "param2": safe_int(self.param2, "param2"),
+            "min_radius": safe_int(self.min_radius, "min_radius"),
+            "max_radius": safe_int(self.max_radius, "max_radius"),
+            "x_bias": safe_int(self.x_bias, "x_bias"),
+            "y_bias": safe_int(self.y_bias, "y_bias"),
+            "pan_min": safe_float(self.pan_min, "pan_min"),
+            "pan_max": safe_float(self.pan_max, "pan_max"),
+            "tilt_min": safe_float(self.tilt_min, "tilt_min"),
+            "tilt_max": safe_float(self.tilt_max, "tilt_max"),
+        }
 
     def _settings_path(self):
         base_dir = os.path.dirname(os.path.abspath(__file__))
