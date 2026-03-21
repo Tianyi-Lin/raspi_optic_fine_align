@@ -725,9 +725,14 @@ class CircleTrackerGUI:
         var.trace_add("write", _on_change)
 
         # 添加键盘方向键支持
-        step = (high - low) / 100.0  # 每次按键移动1%
+        # 为了让小数步进更精细，整数步进保持1
         if isinstance(var, tk.IntVar):
-            step = max(1, int(step))
+            step = 1
+            big_step = max(1, int((high - low) / 10.0))
+        else:
+            # 对于小数，每次按键移动 1/200 的量，按上下键移动 1/20
+            step = (high - low) / 200.0
+            big_step = (high - low) / 20.0
 
         def _on_key(event):
             current = var.get()
@@ -735,6 +740,10 @@ class CircleTrackerGUI:
                 new_val = max(low, current - step)
             elif event.keysym == "Right":
                 new_val = min(high, current + step)
+            elif event.keysym == "Down":
+                new_val = max(low, current - big_step)
+            elif event.keysym == "Up":
+                new_val = min(high, current + big_step)
             elif event.keysym == "Home":
                 new_val = low
             elif event.keysym == "End":
@@ -742,11 +751,18 @@ class CircleTrackerGUI:
             else:
                 return
             var.set(new_val)
+            # 阻止默认事件，防止双重触发
+            return "break"
 
         scale.bind("<Left>", _on_key)
         scale.bind("<Right>", _on_key)
+        scale.bind("<Up>", _on_key)
+        scale.bind("<Down>", _on_key)
         scale.bind("<Home>", _on_key)
         scale.bind("<End>", _on_key)
+        
+        # 必须允许scale获取焦点才能接收键盘事件
+        scale.bind("<Button-1>", lambda e: scale.focus_set())
         scale.bind("<FocusIn>", lambda e: scale.focus_set())
 
         return row + 1
