@@ -185,7 +185,7 @@ class CircleTrackerGUI:
         
         # 1. 强制配置激光测距模块为查询模式 (Passive / Inquire)
         configure_laser_module(
-            port="/dev/ttyAMA2", 
+            port="/dev/ttyAMA1", 
             baudrate=115200, 
             module_id=0,
             output_mode="inquire",
@@ -211,7 +211,7 @@ class CircleTrackerGUI:
         # 3. 初始化激光测距模块 (被动查询模式)
         # 注意：这里不再调用 start() 开启后台死循环，而是由主循环按需调用 query_once()
         try:
-            self.laser_ranger = LaserRangerQueryMonitor(port="/dev/ttyAMA2", baudrate=115200, module_id=0, history_len=10)
+            self.laser_ranger = LaserRangerQueryMonitor(port="/dev/ttyAMA1", baudrate=115200, module_id=0, history_len=10)
         except Exception as exc:
             print(f"[WARNING] Laser Ranger init failed: {exc}")
             
