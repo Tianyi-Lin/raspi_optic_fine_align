@@ -142,8 +142,9 @@ class CircleTrackerGUI:
         main = ttk.Frame(self.root, padding=8)
         main.pack(fill=tk.BOTH, expand=True)
 
-        left = ttk.Frame(main)
+        left = ttk.Frame(main, width=420)
         left.pack(side=tk.LEFT, fill=tk.Y)
+        left.pack_propagate(False)
 
         right = ttk.Frame(main)
         right.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
@@ -152,57 +153,127 @@ class CircleTrackerGUI:
         self.preview_label.pack(fill=tk.BOTH, expand=True)
         ttk.Label(right, textvariable=self.status_text).pack(anchor=tk.W, pady=(6, 0))
 
-        ttk.Label(left, text="串口").pack(anchor=tk.W)
-        ttk.Entry(left, textvariable=self.port, width=16).pack(anchor=tk.W, pady=(0, 6))
-        ttk.Label(left, text="Pan ID").pack(anchor=tk.W)
-        ttk.Entry(left, textvariable=self.pan_id, width=8).pack(anchor=tk.W, pady=(0, 6))
-        ttk.Label(left, text="Tilt ID").pack(anchor=tk.W)
-        ttk.Entry(left, textvariable=self.tilt_id, width=8).pack(anchor=tk.W, pady=(0, 6))
-        ttk.Label(left, text="Move Time ms").pack(anchor=tk.W)
-        ttk.Entry(left, textvariable=self.move_time_ms, width=8).pack(anchor=tk.W, pady=(0, 6))
-        ttk.Label(left, text="Control Period ms").pack(anchor=tk.W)
-        ttk.Entry(left, textvariable=self.control_period_ms, width=8).pack(anchor=tk.W, pady=(0, 6))
-        ttk.Checkbutton(left, text="Enable Track", variable=self.track_enabled).pack(anchor=tk.W, pady=(0, 6))
-        ttk.Checkbutton(left, text="Enable Pan", variable=self.pan_enabled).pack(anchor=tk.W, pady=(0, 6))
-        ttk.Checkbutton(left, text="Enable Tilt", variable=self.tilt_enabled).pack(anchor=tk.W, pady=(0, 6))
-        ttk.Button(left, text="Start", command=self.start).pack(fill=tk.X)
-        ttk.Button(left, text="Stop", command=self.stop).pack(fill=tk.X, pady=(4, 0))
-        ttk.Button(left, text="Reset", command=self.reset_axes).pack(fill=tk.X, pady=(4, 10))
-        ttk.Button(left, text="Exit", command=self.on_close).pack(fill=tk.X, pady=(0, 10))
+        notebook = ttk.Notebook(left)
+        notebook.pack(fill=tk.BOTH, expand=True)
 
-        self._slider(left, "kP X", self.kp_x, 0.0, 0.1, 0.0001)
-        self._slider(left, "kI X", self.ki_x, 0.0, 0.2, 0.0001)
-        self._slider(left, "kD X", self.kd_x, 0.0, 0.02, 0.000001)
-        self._slider(left, "kP Y", self.kp_y, 0.0, 0.1, 0.0001)
-        self._slider(left, "kI Y", self.ki_y, 0.0, 0.2, 0.0001)
-        self._slider(left, "kD Y", self.kd_y, 0.0, 0.02, 0.000001)
-        self._slider(left, "Deadband", self.error_deadband, 0.0, 30.0, 0.1)
-        self._slider(left, "MaxDeg/s", self.max_delta_deg_per_sec, 1.0, 200.0, 1.0)
-        self._slider(left, "Exposure", self.exposure_value, -8.0, 8.0, 0.1)
-        self._slider(left, "Gain", self.analogue_gain, 1.0, 22.0, 0.1)
-        self._slider(left, "Blur ksize", self.ksize, 3, 19, 2)
-        self._slider(left, "MinDist", self.min_dist, 10, 300, 1)
-        self._slider(left, "Param1", self.param1, 50, 500, 1)
-        self._slider(left, "Param2", self.param2, 5, 200, 1)
-        self._slider(left, "MinRadius", self.min_radius, 1, 300, 1)
-        self._slider(left, "MaxRadius", self.max_radius, 1, 300, 1)
-        self._slider(left, "X Bias", self.x_bias, -200, 200, 1)
-        self._slider(left, "Y Bias", self.y_bias, -200, 200, 1)
+        tab_basic = ttk.Frame(notebook, padding=8)
+        tab_pid = ttk.Frame(notebook, padding=8)
+        tab_vision = ttk.Frame(notebook, padding=8)
+        tab_camera = ttk.Frame(notebook, padding=8)
+        notebook.add(tab_basic, text="Basic")
+        notebook.add(tab_pid, text="PID")
+        notebook.add(tab_vision, text="Vision")
+        notebook.add(tab_camera, text="Camera")
 
-    def _slider(self, parent, text, var, low, high, step):
-        ttk.Label(parent, text=text).pack(anchor=tk.W)
-        scale = ttk.Scale(parent, from_=low, to=high, variable=var)
-        scale.pack(fill=tk.X, pady=(0, 4))
+        tab_basic.columnconfigure(1, weight=1)
+        tab_basic.columnconfigure(3, weight=1)
+        r = 0
+        self._grid_entry(tab_basic, r, 0, "串口", self.port, width=18)
+        self._grid_entry(tab_basic, r, 2, "Move ms", self.move_time_ms, width=8)
+        r += 1
+        self._grid_entry(tab_basic, r, 0, "Pan ID", self.pan_id, width=8)
+        self._grid_entry(tab_basic, r, 2, "Tilt ID", self.tilt_id, width=8)
+        r += 1
+        self._grid_entry(tab_basic, r, 0, "Ctrl ms", self.control_period_ms, width=8)
+        r += 1
+        ttk.Checkbutton(tab_basic, text="Enable Track", variable=self.track_enabled).grid(row=r, column=0, sticky="w", pady=(6, 0))
+        ttk.Checkbutton(tab_basic, text="Enable Pan", variable=self.pan_enabled).grid(row=r, column=1, sticky="w", pady=(6, 0))
+        ttk.Checkbutton(tab_basic, text="Enable Tilt", variable=self.tilt_enabled).grid(row=r, column=2, sticky="w", pady=(6, 0))
+        r += 1
+        btns = ttk.Frame(tab_basic)
+        btns.grid(row=r, column=0, columnspan=4, sticky="ew", pady=(10, 0))
+        btns.columnconfigure(0, weight=1)
+        btns.columnconfigure(1, weight=1)
+        btns.columnconfigure(2, weight=1)
+        btns.columnconfigure(3, weight=1)
+        ttk.Button(btns, text="Start", command=self.start).grid(row=0, column=0, sticky="ew")
+        ttk.Button(btns, text="Stop", command=self.stop).grid(row=0, column=1, sticky="ew", padx=(6, 0))
+        ttk.Button(btns, text="Reset", command=self.reset_axes).grid(row=0, column=2, sticky="ew", padx=(6, 0))
+        ttk.Button(btns, text="Exit", command=self.on_close).grid(row=0, column=3, sticky="ew", padx=(6, 0))
+
+        pid_cols = ttk.Frame(tab_pid)
+        pid_cols.pack(fill=tk.BOTH, expand=True)
+        pid_cols.columnconfigure(0, weight=1)
+        pid_cols.columnconfigure(1, weight=1)
+        pid_x_frame = ttk.LabelFrame(pid_cols, text="X Axis", padding=8)
+        pid_y_frame = ttk.LabelFrame(pid_cols, text="Y Axis", padding=8)
+        pid_x_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+        pid_y_frame.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
+        for c in range(2):
+            pid_x_frame.columnconfigure(c, weight=1)
+            pid_y_frame.columnconfigure(c, weight=1)
+        row_x = 0
+        row_x = self._grid_slider(pid_x_frame, row_x, 0, "kP", self.kp_x, 0.0, 0.1)
+        row_x = self._grid_slider(pid_x_frame, row_x, 0, "kI", self.ki_x, 0.0, 0.2)
+        row_x = self._grid_slider(pid_x_frame, row_x, 0, "kD", self.kd_x, 0.0, 0.02)
+        row_y = 0
+        row_y = self._grid_slider(pid_y_frame, row_y, 0, "kP", self.kp_y, 0.0, 0.1)
+        row_y = self._grid_slider(pid_y_frame, row_y, 0, "kI", self.ki_y, 0.0, 0.2)
+        row_y = self._grid_slider(pid_y_frame, row_y, 0, "kD", self.kd_y, 0.0, 0.02)
+        common = ttk.LabelFrame(tab_pid, text="Common", padding=8)
+        common.pack(fill=tk.X, pady=(10, 0))
+        common.columnconfigure(0, weight=1)
+        common.columnconfigure(1, weight=1)
+        r2 = 0
+        r2 = self._grid_slider(common, r2, 0, "Deadband", self.error_deadband, 0.0, 30.0)
+        r2 = self._grid_slider(common, r2, 0, "MaxDeg/s", self.max_delta_deg_per_sec, 1.0, 200.0)
+
+        tab_vision.columnconfigure(0, weight=1)
+        tab_vision.columnconfigure(1, weight=1)
+        left_vis = ttk.LabelFrame(tab_vision, text="Hough", padding=8)
+        right_vis = ttk.LabelFrame(tab_vision, text="Bias/Blur", padding=8)
+        left_vis.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+        right_vis.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
+        for c in range(2):
+            left_vis.columnconfigure(c, weight=1)
+            right_vis.columnconfigure(c, weight=1)
+        rv = 0
+        rv = self._grid_slider(left_vis, rv, 0, "MinDist", self.min_dist, 10, 300)
+        rv = self._grid_slider(left_vis, rv, 0, "Param1", self.param1, 50, 500)
+        rv = self._grid_slider(left_vis, rv, 0, "Param2", self.param2, 5, 200)
+        rv = self._grid_slider(left_vis, rv, 0, "MinRadius", self.min_radius, 1, 300)
+        rv = self._grid_slider(left_vis, rv, 0, "MaxRadius", self.max_radius, 1, 300)
+        rv2 = 0
+        rv2 = self._grid_slider(right_vis, rv2, 0, "Blur ksize", self.ksize, 3, 19)
+        rv2 = self._grid_slider(right_vis, rv2, 0, "X Bias", self.x_bias, -200, 200)
+        rv2 = self._grid_slider(right_vis, rv2, 0, "Y Bias", self.y_bias, -200, 200)
+
+        tab_camera.columnconfigure(0, weight=1)
+        cam = ttk.Frame(tab_camera)
+        cam.pack(fill=tk.BOTH, expand=True)
+        cam.columnconfigure(0, weight=1)
+        rc = 0
+        rc = self._grid_slider(cam, rc, 0, "Exposure", self.exposure_value, -8.0, 8.0)
+        rc = self._grid_slider(cam, rc, 0, "Gain", self.analogue_gain, 1.0, 22.0)
+
+    def _grid_entry(self, parent, row, col, text, var, width=10):
+        ttk.Label(parent, text=text).grid(row=row, column=col, sticky="w", padx=(0, 6), pady=(2, 2))
+        ttk.Entry(parent, textvariable=var, width=width).grid(row=row, column=col + 1, sticky="ew", pady=(2, 2))
+
+    def _grid_slider(self, parent, row, col, text, var, low, high):
+        frame = ttk.Frame(parent)
+        frame.grid(row=row, column=col, columnspan=2, sticky="ew", pady=(2, 6))
+        frame.columnconfigure(0, weight=1)
+        header = ttk.Frame(frame)
+        header.grid(row=0, column=0, sticky="ew")
+        header.columnconfigure(0, weight=1)
+        ttk.Label(header, text=text).grid(row=0, column=0, sticky="w")
         if isinstance(var, tk.IntVar):
-            ttk.Label(parent, textvariable=var).pack(anchor=tk.E, pady=(0, 4))
+            value_text = tk.StringVar(value=str(var.get()))
         else:
-            label_var = tk.StringVar(value=f"{var.get():.4f}")
-            ttk.Label(parent, textvariable=label_var).pack(anchor=tk.E, pady=(0, 4))
+            value_text = tk.StringVar(value=f"{var.get():.4f}")
+        ttk.Label(header, textvariable=value_text).grid(row=0, column=1, sticky="e")
+        scale = ttk.Scale(frame, from_=low, to=high, variable=var)
+        scale.grid(row=1, column=0, sticky="ew")
 
-            def _on_change(*_):
-                label_var.set(f"{var.get():.4f}")
+        def _on_change(*_):
+            if isinstance(var, tk.IntVar):
+                value_text.set(str(int(var.get())))
+            else:
+                value_text.set(f"{var.get():.4f}")
 
-            var.trace_add("write", _on_change)
+        var.trace_add("write", _on_change)
+        return row + 1
 
     def start(self):
         if self.running:
