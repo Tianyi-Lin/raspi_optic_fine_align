@@ -141,6 +141,7 @@ class CircleTrackerGUI:
         self.latest_detection = None
         self.latest_detection_time = 0.0
         self.detect_stale_sec = 0.3
+        self.latest_green_channel = None
 
         self.fps_cam = 0.0
         self.fps_ctrl = 0.0
@@ -753,6 +754,7 @@ class CircleTrackerGUI:
                     self.latest_frame = (frame_rgb, s)
                     self.latest_frame_id += 1
                     detection = self.latest_detection
+                    green_data = self.latest_green_channel
                     detection_age = time.time() - self.latest_detection_time if self.latest_detection_time > 0 else None
                 if detection_age is None or detection_age > self.detect_stale_sec:
                     detection = None
@@ -872,7 +874,42 @@ class CircleTrackerGUI:
                     dt=dt,
                     bounds=(pan_at_min, pan_at_max, tilt_at_min, tilt_at_max),
                 )
-                frame_rgb_show = cv2.cvtColor(frame_rgb, cv2.COLOR_BGR2RGB)
+                
+                # 创建双屏显示：原图 + 绿色通道处理图
+                frame_rgb_disp = cv2.cvtColor(frame_rgb, cv2.COLOR_BGR2RGB)
+                
+                if green_data is not None:
+                    blurred_green, offset_x, offset_y, scale = green_data
+                    # 将单通道转为3通道灰度图，以便和彩色原图拼接
+                    green_rgb = cv2.cvtColor(blurred_green, cv2.COLOR_GRAY2RGB)
+                    # 如果有ROI，将其放回原尺寸的黑底图像中
+                    full_green = np.zeros_like(frame_rgb_disp)
+                    gh, gw = green_rgb.shape[:2]
+                    
+                    # 计算放回原图的位置
+                    orig_w = int(gw / scale)
+                    orig_h = int(gh / scale)
+                    green_resized = cv2.resize(green_rgb, (orig_w, orig_h))
+                    
+                    # 放入全尺寸图中
+                    end_y = min(h, offset_y + orig_h)
+                    end_x = min(w, offset_x + orig_w)
+                    roi_h = end_y - offset_y
+                    roi_w = end_x - offset_x
+                    
+                    if roi_h > 0 and roi_w > 0:
+                        full_green[offset_y:end_y, offset_x:end_x] = green_resized[:roi_h, :roi_w]
+                    
+                    # 在图上添加文字说明
+                    cv2.putText(full_green, "Green Channel (Processed)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                    
+                    # 水平拼接
+                    frame_rgb_show = np.hstack((frame_rgb_disp, full_green))
+                else:
+                    # 如果还没有处理好的图，就用黑图补齐
+                    full_black = np.zeros_like(frame_rgb_disp)
+                    cv2.putText(full_black, "Green Channel (Waiting...)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                    frame_rgb_show = np.hstack((frame_rgb_disp, full_black))
 
                 payload = (
                     frame_rgb_show,
@@ -923,7 +960,7 @@ class CircleTrackerGUI:
                     y1 = min(h, int(last_det[1] + margin))
                     if x1 - x0 >= 20 and y1 - y0 >= 20:
                         roi = (x0, y0, x1, y1)
-                detection = self._detect_circle(
+                detection, blurred_green, offset_x, offset_y, scale = self._detect_circle(
                     frame_rgb,
                     ksize=s["ksize"],
                     min_dist=s["min_dist"],
@@ -951,6 +988,7 @@ class CircleTrackerGUI:
                 with self.detect_lock:
                     self.latest_detection = detection_to_save
                     self.latest_detection_time = time.time()
+                    self.latest_green_channel = (blurred_green, offset_x, offset_y, scale)
                     last_processed_id = frame_id
         except Exception as exc:
             self.worker_error = str(exc)
@@ -1105,13 +1143,13 @@ class CircleTrackerGUI:
             maxRadius=max_radius,
         )
         if circles is None:
-            return None
+            return None, blurred, offset_x, offset_y, scale
         circles = np.round(circles[0]).astype(int)
         chosen = max(circles, key=lambda c: c[2])
         x = int(round(chosen[0] / scale)) + offset_x
         y = int(round(chosen[1] / scale)) + offset_y
         r = int(round(chosen[2] / scale))
-        return x, y, r
+        return (x, y, r), blurred, offset_x, offset_y, scale
 
     def _draw_overlay(self, frame, center, detection, target, pred, radius, error, dt, bounds=None):
         cv2.circle(frame, center, 3, (255, 0, 255), -1)
