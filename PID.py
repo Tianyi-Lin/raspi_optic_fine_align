@@ -1,93 +1,72 @@
-#-*- coding: UTF-8 -*-
-# 调用必需库
 import time
 
 
 class PID:
-    def __init__(self, kP=1, kI=0, kD=0, output_bound_low=-5, output_bound_high=5):
-        # 初始化PID参数
-        self.kP = kP
-        self.kI = kI
-        self.kD = kD
-        
-        # 输出钳位 单位是角度 
-        self.output_bound_low = output_bound_low
-        self.output_bound_high = output_bound_high
-        
-        self.error_threhold = 5
-        
-        # PID输出是否饱和的flag
-        self.output_windup_flag = False
-        
-        # PID输出是否与error同号 同号会导致输出饱和更加严重
-        self.error_output_sign_flag = False
+    def __init__(
+        self,
+        kP=1.0,
+        kI=0.0,
+        kD=0.0,
+        output_bound_low=-5.0,
+        output_bound_high=5.0,
+        integral_bound_low=-2000.0,
+        integral_bound_high=2000.0,
+    ):
+        self.kP = float(kP)
+        self.kI = float(kI)
+        self.kD = float(kD)
+        self.output_bound_low = float(output_bound_low)
+        self.output_bound_high = float(output_bound_high)
+        self.integral_bound_low = float(integral_bound_low)
+        self.integral_bound_high = float(integral_bound_high)
+        self.prev_time = time.time()
+        self.prev_error = 0.0
+        self.prev_output = 0.0
+        self.p_term = 0.0
+        self.i_term = 0.0
+        self.d_term = 0.0
 
-        # 初始化当前时间和上一次计算的时间
-        self.currTime = time.time()
-        self.prevTime = self.currTime
+    def reset(self):
+        self.prev_time = time.time()
+        self.prev_error = 0.0
+        self.prev_output = 0.0
+        self.p_term = 0.0
+        self.i_term = 0.0
+        self.d_term = 0.0
 
-        # 初始化上一次计算的误差
-        self.prevError = 0
-        
-        # 初始化上一次的输出值
-        self.prevOutput = 0
+    def set_gains(self, kP=None, kI=None, kD=None):
+        if kP is not None:
+            self.kP = float(kP)
+        if kI is not None:
+            self.kI = float(kI)
+        if kD is not None:
+            self.kD = float(kD)
 
-        # 初始化误差的比例值，积分值和微分值
-        self.cP = 0
-        self.cI = 0
-        self.cD = 0
+    def set_output_bounds(self, low=None, high=None):
+        if low is not None:
+            self.output_bound_low = float(low)
+        if high is not None:
+            self.output_bound_high = float(high)
 
-
-    def update(self, error, sleep=0.1):
-        # pid更新间隔
-        time.sleep(sleep)
-
-        # 获取当前时间并计算时间差
-        self.currTime = time.time()
-        deltaTime = self.currTime - self.prevTime
-
-        # 计算误差的微分
-        deltaError = error - self.prevError
-
-        # P 比例项
-        self.cP = error
-
-        # D 微分项
-        self.cD = (deltaError / deltaTime) if deltaTime > 0 else 0
-        
-        # 判断PID输出是否超限
-        self.output_windup_flag = self.prevOutput > self.output_bound_high or self.prevOutput < self.output_bound_low
-            
-        # 判断error和PID输出是不是同号
-        self.error_output_sign_flag = (self.prevOutput >= 0 and error >= 0) or (self.prevOutput < 0 and error < 0)
-        
-        # I 积分项 采用条件积分
-        # 输出已经饱和 且 Error和输出同号会导致饱和更加严重 因此切断积分器
-        if self.output_windup_flag and self.error_output_sign_flag:
-            self.cI += 0
-        # 开启积分器
-        else:
-            # 积分项
-            self.cI += error * deltaTime
-            
-#             if error <= self.error_threhold:
-#                 self.cI += 0
-        
-        # print('cI: ' + str(self.cI))
-        print('error' + str(error))
-
-        # 保存时间和误差为下次更新做准备
-        self.prevTime = self.currTime
-        self.prevError = error
-        
-        # 变速积分 error大积分小 error小积分大
-        scale_kI = self.kI / (1 + 0.0001 * abs(error))
-        
-        # 计算输出
-        Output = sum([self.kP * self.cP, scale_kI * self.cI, self.kD * self.cD])
-        # 保存输出为下一次更新准备
-        self.prevOutput = Output
-
-        # 返回输出值
-        return Output
+    def update(self, error, dt=None):
+        now = time.time()
+        if dt is None:
+            dt = now - self.prev_time
+        dt = max(float(dt), 1e-4)
+        error = float(error)
+        delta_error = error - self.prev_error
+        self.p_term = error
+        self.d_term = delta_error / dt
+        output_saturated = self.prev_output <= self.output_bound_low or self.prev_output >= self.output_bound_high
+        same_sign = (self.prev_output >= 0.0 and error >= 0.0) or (self.prev_output < 0.0 and error < 0.0)
+        if not (output_saturated and same_sign):
+            self.i_term += error * dt
+            self.i_term = max(self.integral_bound_low, min(self.integral_bound_high, self.i_term))
+        adaptive_ki = self.kI / (1.0 + 0.0001 * abs(error))
+        output = self.kP * self.p_term + adaptive_ki * self.i_term + self.kD * self.d_term
+        output = max(self.output_bound_low, min(self.output_bound_high, output))
+        self.prev_time = now
+        self.prev_error = error
+        self.prev_output = output
+        return output
     
