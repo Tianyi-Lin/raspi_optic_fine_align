@@ -804,22 +804,27 @@ class CircleTrackerGUI:
 
                 if do_track and s["pan_enabled"]:
                     delta_x = self.pid_x.update(error_x, dt=dt)
-                    # 边界限制：如果到达边界，限制向边界方向的移动
+                    # 边界限制与抗积分饱和 (Anti-windup)
+                    # 如果到达边界且PID试图继续向边界外移动，则禁止移动并清零积分项防止累积
                     if pan_at_min_before and delta_x < 0:
-                        delta_x = 0  # 禁止向最小边界移动
+                        delta_x = 0
+                        self.pid_x.i_term = 0.0
                     if pan_at_max_before and delta_x > 0:
-                        delta_x = 0  # 禁止向最大边界移动
+                        delta_x = 0
+                        self.pid_x.i_term = 0.0
                     desired_pan = self.current_pan_angle + delta_x
                     step_pan = max(-max_step, min(max_step, desired_pan - self.current_pan_angle))
                     self.current_pan_angle = max(pan_min, min(pan_max, self.current_pan_angle + step_pan))
 
                 if do_track and s["tilt_enabled"]:
                     delta_y = self.pid_y.update(error_y, dt=dt)
-                    # 边界限制：如果到达边界，限制向边界方向的移动
+                    # 边界限制与抗积分饱和 (Anti-windup)
                     if tilt_at_min_before and delta_y < 0:
-                        delta_y = 0  # 禁止向最小边界移动
+                        delta_y = 0
+                        self.pid_y.i_term = 0.0
                     if tilt_at_max_before and delta_y > 0:
-                        delta_y = 0  # 禁止向最大边界移动
+                        delta_y = 0
+                        self.pid_y.i_term = 0.0
                     desired_tilt = self.current_tilt_angle + delta_y
                     step_tilt = max(-max_step, min(max_step, desired_tilt - self.current_tilt_angle))
                     self.current_tilt_angle = max(tilt_min, min(tilt_max, self.current_tilt_angle + step_tilt))
