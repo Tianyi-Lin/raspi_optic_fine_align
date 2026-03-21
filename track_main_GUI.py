@@ -777,6 +777,10 @@ class CircleTrackerGUI:
             self._update_settings_from_vars()
             self._ensure_camera()
             self.running = True
+            
+            # 进入 GUI 并启动运行时，立即回正舵机
+            self._center_servos()
+            
             self.worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
             self.worker_thread.start()
             self.detect_thread = threading.Thread(target=self._detect_loop, daemon=True)
@@ -801,16 +805,23 @@ class CircleTrackerGUI:
         self.tracking_active = False
         if self.running:
             self.status_text.set("检测中（未跟踪）")
+        # 停止时强制回正
+        self._center_servos()
 
     def reset_axes(self):
-        self.current_pan_angle = 0.0
-        self.current_tilt_angle = 0.0
         self.pid_x.reset()
         self.pid_y.reset()
         self.kalman = Kalman2D()
         with self.detect_lock:
             self.latest_detection = None
             self.latest_detection_time = 0.0
+        # 复位时强制回正
+        self._center_servos()
+        
+    def _center_servos(self):
+        """将舵机回正到0度"""
+        self.current_pan_angle = 0.0
+        self.current_tilt_angle = 0.0
         if self.servo is not None:
             self.servo.set_angles(
                 [
