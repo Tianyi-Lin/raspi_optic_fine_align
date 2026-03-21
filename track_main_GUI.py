@@ -473,7 +473,8 @@ class CircleTrackerGUI:
 
         left = ttk.Frame(main, width=420)
         left.pack(side=tk.LEFT, fill=tk.Y)
-        left.pack_propagate(False)
+        # 移除 pack_propagate(False)，让左侧面板高度能根据内容和主窗口自适应，同时利用 width=420 作为建议宽度
+        # left.pack_propagate(False)
 
         right = ttk.Frame(main)
         right.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
@@ -1300,9 +1301,10 @@ class CircleTrackerGUI:
 def main():
     root = tk.Tk()
     root.title("Raspi Optic Fine Align")
-    # 增加宽度以适应双图像显示 (左侧控制面板宽约420, 右侧双图像各640 -> 420 + 1280 + padding)
-    root.geometry("1720x760")
-    # 允许自适应调整
+    # 不再硬编码窗口大小，让 Tkinter 根据内部控件内容（左侧面板 + 拼接后的双图像）自动计算并撑开窗口
+    # root.geometry("1720x760") 
+    
+    # 允许用户根据需要自适应调整
     root.resizable(True, True)
     app = CircleTrackerGUI(root)
     root.mainloop()
