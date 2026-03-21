@@ -128,6 +128,7 @@ class CircleTrackerGUI:
         self.max_radius = tk.IntVar(value=120)
         self.x_bias = tk.IntVar(value=0)
         self.y_bias = tk.IntVar(value=0)
+        self.camera_fps = tk.IntVar(value=60)
         self.status_text = tk.StringVar(value="就绪")
         # 舵机角度范围配置（角度制）
         self.pan_min = tk.DoubleVar(value=-90.0)
@@ -193,6 +194,7 @@ class CircleTrackerGUI:
             "max_radius": 120,
             "x_bias": 0,
             "y_bias": 0,
+            "camera_fps": 60,
             "pan_min": -90.0,
             "pan_max": 90.0,
             "tilt_min": -90.0,
@@ -254,6 +256,7 @@ class CircleTrackerGUI:
                 "max_radius": safe_int(self.max_radius, "max_radius"),
                 "x_bias": safe_int(self.x_bias, "x_bias"),
                 "y_bias": safe_int(self.y_bias, "y_bias"),
+                "camera_fps": safe_int(self.camera_fps, "camera_fps"),
                 "pan_min": safe_float(self.pan_min, "pan_min"),
                 "pan_max": safe_float(self.pan_max, "pan_max"),
             "tilt_min": safe_float(self.tilt_min, "tilt_min"),
@@ -346,6 +349,7 @@ class CircleTrackerGUI:
             "max_radius": safe_int(self.max_radius, "max_radius"),
             "x_bias": safe_int(self.x_bias, "x_bias"),
             "y_bias": safe_int(self.y_bias, "y_bias"),
+            "camera_fps": safe_int(self.camera_fps, "camera_fps"),
             "pan_min": safe_float(self.pan_min, "pan_min"),
             "pan_max": safe_float(self.pan_max, "pan_max"),
             "tilt_min": safe_float(self.tilt_min, "tilt_min"),
@@ -645,6 +649,7 @@ class CircleTrackerGUI:
         cam.pack(fill=tk.BOTH, expand=True)
         cam.columnconfigure(0, weight=1)
         rc = 0
+        rc = self._grid_slider(cam, rc, 0, "相机FPS", self.camera_fps, 10, 120)
         ttk.Checkbutton(cam, text="自动曝光", variable=self.ae_enable).grid(row=rc, column=0, sticky="w", pady=(2, 8))
         rc += 1
         rc = self._grid_slider(cam, rc, 0, "曝光", self.exposure_value, -8.0, 8.0)
@@ -779,7 +784,7 @@ class CircleTrackerGUI:
                 s = self._get_settings()
                 if self.servo is not None:
                     self.servo.moving_time = max(0, int(s["move_time_ms"]))
-                self._sync_camera_controls(s["ae_enable"], s["exposure"], s["gain"])
+                self._sync_camera_controls(s["ae_enable"], s["exposure"], s["gain"], s["camera_fps"])
 
                 frame_rgb = self.picam2.capture_array()
                 h, w = frame_rgb.shape[:2]
@@ -1083,30 +1088,39 @@ class CircleTrackerGUI:
 
         self.after_id = self.root.after(30, self._ui_loop)
 
-    def _sync_camera_controls(self, ae_enable, exposure, gain):
+    def _sync_camera_controls(self, ae_enable, exposure, gain, target_fps):
         # 检查是否有变化
         ae_changed = self.last_ae_enable != ae_enable
         exposure_changed = self.last_exposure != exposure
         gain_changed = self.last_gain != gain
+        fps_changed = getattr(self, 'last_fps', None) != target_fps
         
-        if not ae_changed and not exposure_changed and not gain_changed:
+        if not ae_changed and not exposure_changed and not gain_changed and not fps_changed:
             return
+            
+        controls_to_set = {}
+        
+        # 处理帧率修改
+        if fps_changed and target_fps > 0:
+            frame_duration = int(1000000 / target_fps)
+            controls_to_set["FrameDurationLimits"] = (frame_duration, frame_duration)
+            self.last_fps = target_fps
         
         # 自动曝光关闭时，同时设置AeEnable和曝光参数
         if not ae_enable:
-            controls = {}
             if ae_changed:
-                controls["AeEnable"] = False
+                controls_to_set["AeEnable"] = False
             if exposure_changed or ae_changed:
-                controls["ExposureValue"] = float(exposure)
+                controls_to_set["ExposureValue"] = float(exposure)
             if gain_changed or ae_changed:
-                controls["AnalogueGain"] = float(gain)
-            if controls:
-                self.picam2.set_controls(controls)
+                controls_to_set["AnalogueGain"] = float(gain)
         else:
             # 自动曝光开启时，只设置AeEnable
             if ae_changed:
-                self.picam2.set_controls({"AeEnable": True})
+                controls_to_set["AeEnable"] = True
+                
+        if controls_to_set:
+            self.picam2.set_controls(controls_to_set)
         
         self.last_ae_enable = ae_enable
         self.last_exposure = exposure
@@ -1115,9 +1129,10 @@ class CircleTrackerGUI:
     def _ensure_camera(self):
         if self.picam2 is not None:
             return
+        settings = self._get_settings()
         self.picam2 = Picamera2()
         self.picam2.start_preview(Preview.NULL)
-        framerate = 60
+        framerate = settings.get("camera_fps", 60)
         frame_duration = int(1000000 / framerate)
         config = self.picam2.create_video_configuration(
             controls={"FrameDurationLimits": (frame_duration, frame_duration)}
@@ -1131,6 +1146,7 @@ class CircleTrackerGUI:
         self.last_ae_enable = None
         self.last_exposure = None
         self.last_gain = None
+        self.last_fps = framerate
 
     def _ensure_servo(self):
         if self.servo is not None:
