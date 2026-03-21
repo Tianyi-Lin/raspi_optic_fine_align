@@ -57,6 +57,7 @@ class CircleTrackerGUI:
         self.frame_queue = queue.Queue(maxsize=1)
         self.settings_lock = threading.Lock()
         self.settings = {}
+        self.worker_error = None
         self.last_exposure = None
         self.last_gain = None
         self.fps = 0.0
@@ -68,6 +69,7 @@ class CircleTrackerGUI:
         self.current_tilt_angle = 0.0
         self.active_pan_id = 1
         self.active_tilt_id = 2
+        self.jog_step_deg = tk.DoubleVar(value=1.0)
 
         self.port = tk.StringVar(value="/dev/ttyAMA0")
         self.pan_id = tk.IntVar(value=1)
@@ -175,6 +177,7 @@ class CircleTrackerGUI:
         self._grid_entry(tab_basic, r, 2, "Tilt ID", self.tilt_id, width=8)
         r += 1
         self._grid_entry(tab_basic, r, 0, "Ctrl ms", self.control_period_ms, width=8)
+        self._grid_entry(tab_basic, r, 2, "Jog deg", self.jog_step_deg, width=8)
         r += 1
         ttk.Checkbutton(tab_basic, text="Enable Track", variable=self.track_enabled).grid(row=r, column=0, sticky="w", pady=(6, 0))
         ttk.Checkbutton(tab_basic, text="Enable Pan", variable=self.pan_enabled).grid(row=r, column=1, sticky="w", pady=(6, 0))
@@ -190,6 +193,15 @@ class CircleTrackerGUI:
         ttk.Button(btns, text="Stop", command=self.stop).grid(row=0, column=1, sticky="ew", padx=(6, 0))
         ttk.Button(btns, text="Reset", command=self.reset_axes).grid(row=0, column=2, sticky="ew", padx=(6, 0))
         ttk.Button(btns, text="Exit", command=self.on_close).grid(row=0, column=3, sticky="ew", padx=(6, 0))
+
+        jog = ttk.LabelFrame(tab_basic, text="Jog", padding=8)
+        jog.grid(row=r + 1, column=0, columnspan=4, sticky="ew", pady=(10, 0))
+        for c in range(3):
+            jog.columnconfigure(c, weight=1)
+        ttk.Button(jog, text="Up", command=lambda: self._jog(0.0, +self.jog_step_deg.get())).grid(row=0, column=1, sticky="ew")
+        ttk.Button(jog, text="Left", command=lambda: self._jog(-self.jog_step_deg.get(), 0.0)).grid(row=1, column=0, sticky="ew", pady=(6, 0))
+        ttk.Button(jog, text="Down", command=lambda: self._jog(0.0, -self.jog_step_deg.get())).grid(row=1, column=1, sticky="ew", pady=(6, 0))
+        ttk.Button(jog, text="Right", command=lambda: self._jog(+self.jog_step_deg.get(), 0.0)).grid(row=1, column=2, sticky="ew", pady=(6, 0))
 
         pid_cols = ttk.Frame(tab_pid)
         pid_cols.pack(fill=tk.BOTH, expand=True)
@@ -280,6 +292,7 @@ class CircleTrackerGUI:
             return
         try:
             self.stop_event.clear()
+            self.worker_error = None
             self._update_settings_from_vars()
             self.picam2 = Picamera2()
             self.picam2.start_preview(Preview.NULL)
@@ -363,119 +376,130 @@ class CircleTrackerGUI:
             self.servo.move_angle(wait=False)
 
     def _worker_loop(self):
-        last_time = time.time()
-        while not self.stop_event.is_set():
-            loop_start = time.time()
-            dt = max(loop_start - last_time, 1e-4)
-            last_time = loop_start
+        try:
+            last_time = time.time()
+            while not self.stop_event.is_set():
+                loop_start = time.time()
+                dt = max(loop_start - last_time, 1e-4)
+                last_time = loop_start
 
-            if self.picam2 is None or self.servo is None:
-                time.sleep(0.01)
-                continue
+                if self.picam2 is None or self.servo is None:
+                    time.sleep(0.01)
+                    continue
 
-            s = self._get_settings()
-            self.servo.moving_time = max(0, int(s["move_time_ms"]))
-            self._sync_camera_controls(s["exposure"], s["gain"])
+                s = self._get_settings()
+                self.servo.moving_time = max(0, int(s["move_time_ms"]))
+                self._sync_camera_controls(s["exposure"], s["gain"])
 
-            frame_rgb = self.picam2.capture_array()
-            h, w = frame_rgb.shape[:2]
-            center_x, center_y = w // 2, h // 2
-            detection = self._detect_circle(
-                frame_rgb,
-                ksize=s["ksize"],
-                min_dist=s["min_dist"],
-                param1=s["param1"],
-                param2=s["param2"],
-                min_radius=s["min_radius"],
-                max_radius=s["max_radius"],
-            )
-
-            measurement = None
-            radius = 0
-            if detection is not None:
-                measurement = (float(detection[0]), float(detection[1]))
-                radius = int(detection[2])
-
-            filtered_x, filtered_y, pred_x, pred_y = self.kalman.update(measurement)
-            target_x = filtered_x + float(s["x_bias"])
-            target_y = filtered_y + float(s["y_bias"])
-
-            if not s["track_enabled"]:
-                target_x = float(center_x)
-                target_y = float(center_y)
-
-            self.pid_x.set_gains(s["kp_x"], s["ki_x"], s["kd_x"])
-            self.pid_y.set_gains(s["kp_y"], s["ki_y"], s["kd_y"])
-
-            error_x = float(center_x) - target_x
-            error_y = float(center_y) - target_y
-            deadband = float(s["deadband"])
-            if abs(error_x) < deadband:
-                error_x = 0.0
-            if abs(error_y) < deadband:
-                error_y = 0.0
-
-            max_step = float(s["max_delta_deg_per_sec"]) * dt
-
-            if s["pan_enabled"]:
-                delta_x = self.pid_x.update(error_x, dt=dt)
-                desired_pan = self.current_pan_angle + delta_x
-                step_pan = max(-max_step, min(max_step, desired_pan - self.current_pan_angle))
-                self.current_pan_angle = max(-90.0, min(90.0, self.current_pan_angle + step_pan))
-
-            if s["tilt_enabled"]:
-                delta_y = self.pid_y.update(error_y, dt=dt)
-                desired_tilt = self.current_tilt_angle + delta_y
-                step_tilt = max(-max_step, min(max_step, desired_tilt - self.current_tilt_angle))
-                self.current_tilt_angle = max(-90.0, min(90.0, self.current_tilt_angle + step_tilt))
-
-            if s["pan_enabled"] or s["tilt_enabled"]:
-                self.servo.set_angles(
-                    [
-                        (self.active_pan_id, self.current_pan_angle),
-                        (self.active_tilt_id, self.current_tilt_angle),
-                    ]
+                frame_rgb = self.picam2.capture_array()
+                h, w = frame_rgb.shape[:2]
+                center_x, center_y = w // 2, h // 2
+                detection = self._detect_circle(
+                    frame_rgb,
+                    ksize=s["ksize"],
+                    min_dist=s["min_dist"],
+                    param1=s["param1"],
+                    param2=s["param2"],
+                    min_radius=s["min_radius"],
+                    max_radius=s["max_radius"],
                 )
-                self.servo.move_angle(wait=False)
 
-            frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
-            self._draw_overlay(
-                frame=frame_bgr,
-                center=(center_x, center_y),
-                detection=detection,
-                target=(int(round(target_x)), int(round(target_y))),
-                pred=(int(round(pred_x)), int(round(pred_y))),
-                radius=radius,
-                error=(error_x, error_y),
-                dt=dt,
-            )
-            frame_rgb_show = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+                measurement = None
+                radius = 0
+                circle_found = detection is not None
+                if detection is not None:
+                    measurement = (float(detection[0]), float(detection[1]))
+                    radius = int(detection[2])
 
-            payload = (
-                frame_rgb_show,
-                dt,
-                (error_x, error_y),
-                (self.current_pan_angle, self.current_tilt_angle),
-            )
-            try:
-                if self.frame_queue.full():
-                    self.frame_queue.get_nowait()
-                self.frame_queue.put_nowait(payload)
-            except Exception:
-                pass
+                filtered_x, filtered_y, pred_x, pred_y = self.kalman.update(measurement)
+                target_x = filtered_x + float(s["x_bias"])
+                target_y = filtered_y + float(s["y_bias"])
 
-            period_ms = max(10, int(s["control_period_ms"]))
-            move_ms = max(0, int(s["move_time_ms"]))
-            effective_ms = max(period_ms, move_ms)
-            elapsed_ms = int((time.time() - loop_start) * 1000)
-            sleep_ms = max(0, effective_ms - elapsed_ms)
-            if sleep_ms > 0:
-                time.sleep(sleep_ms / 1000.0)
+                if not s["track_enabled"]:
+                    target_x = float(center_x)
+                    target_y = float(center_y)
+
+                self.pid_x.set_gains(s["kp_x"], s["ki_x"], s["kd_x"])
+                self.pid_y.set_gains(s["kp_y"], s["ki_y"], s["kd_y"])
+
+                error_x = float(center_x) - target_x
+                error_y = float(center_y) - target_y
+                deadband = float(s["deadband"])
+                if abs(error_x) < deadband:
+                    error_x = 0.0
+                if abs(error_y) < deadband:
+                    error_y = 0.0
+
+                max_step = float(s["max_delta_deg_per_sec"]) * dt
+
+                if s["pan_enabled"]:
+                    delta_x = self.pid_x.update(error_x, dt=dt)
+                    desired_pan = self.current_pan_angle + delta_x
+                    step_pan = max(-max_step, min(max_step, desired_pan - self.current_pan_angle))
+                    self.current_pan_angle = max(-90.0, min(90.0, self.current_pan_angle + step_pan))
+
+                if s["tilt_enabled"]:
+                    delta_y = self.pid_y.update(error_y, dt=dt)
+                    desired_tilt = self.current_tilt_angle + delta_y
+                    step_tilt = max(-max_step, min(max_step, desired_tilt - self.current_tilt_angle))
+                    self.current_tilt_angle = max(-90.0, min(90.0, self.current_tilt_angle + step_tilt))
+
+                if s["pan_enabled"] or s["tilt_enabled"]:
+                    self.servo.set_angles(
+                        [
+                            (self.active_pan_id, self.current_pan_angle),
+                            (self.active_tilt_id, self.current_tilt_angle),
+                        ]
+                    )
+                    self.servo.move_angle(wait=False)
+
+                frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
+                self._draw_overlay(
+                    frame=frame_bgr,
+                    center=(center_x, center_y),
+                    detection=detection,
+                    target=(int(round(target_x)), int(round(target_y))),
+                    pred=(int(round(pred_x)), int(round(pred_y))),
+                    radius=radius,
+                    error=(error_x, error_y),
+                    dt=dt,
+                )
+                frame_rgb_show = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+
+                payload = (
+                    frame_rgb_show,
+                    dt,
+                    (error_x, error_y),
+                    (self.current_pan_angle, self.current_tilt_angle),
+                    circle_found,
+                    radius,
+                )
+                try:
+                    if self.frame_queue.full():
+                        self.frame_queue.get_nowait()
+                    self.frame_queue.put_nowait(payload)
+                except Exception:
+                    pass
+
+                period_ms = max(10, int(s["control_period_ms"]))
+                move_ms = max(0, int(s["move_time_ms"]))
+                effective_ms = max(period_ms, move_ms)
+                elapsed_ms = int((time.time() - loop_start) * 1000)
+                sleep_ms = max(0, effective_ms - elapsed_ms)
+                if sleep_ms > 0:
+                    time.sleep(sleep_ms / 1000.0)
+        except Exception as exc:
+            self.worker_error = str(exc)
+            self.stop_event.set()
 
     def _ui_loop(self):
         if not self.running:
             return
         self._update_settings_from_vars()
+        if self.worker_error is not None:
+            self.status_text.set(f"Worker error: {self.worker_error}")
+            self.stop()
+            return
         latest = None
         try:
             while True:
@@ -484,7 +508,7 @@ class CircleTrackerGUI:
             pass
 
         if latest is not None:
-            frame_rgb_show, dt, (error_x, error_y), (pan, tilt) = latest
+            frame_rgb_show, dt, (error_x, error_y), (pan, tilt), circle_found, radius = latest
             image = Image.fromarray(frame_rgb_show)
             photo = ImageTk.PhotoImage(image=image)
             self.preview_label.configure(image=photo)
@@ -492,7 +516,7 @@ class CircleTrackerGUI:
             if dt > 0:
                 self.fps = 1.0 / dt
             self.status_text.set(
-                f"FPS={self.fps:.1f}  pan={pan:.2f}  tilt={tilt:.2f}  ex={error_x:.1f}  ey={error_y:.1f}"
+                f"FPS={self.fps:.1f}  pan={pan:.2f}  tilt={tilt:.2f}  ex={error_x:.1f}  ey={error_y:.1f}  circle={int(circle_found)} r={radius}"
             )
 
         self.after_id = self.root.after(30, self._ui_loop)
@@ -557,6 +581,19 @@ class CircleTrackerGUI:
     def on_close(self):
         self.stop()
         self.root.destroy()
+
+    def _jog(self, delta_pan, delta_tilt):
+        if self.servo is None:
+            return
+        self.current_pan_angle = float(self.current_pan_angle) + float(delta_pan)
+        self.current_tilt_angle = float(self.current_tilt_angle) + float(delta_tilt)
+        self.servo.set_angles(
+            [
+                (self.active_pan_id, self.current_pan_angle),
+                (self.active_tilt_id, self.current_tilt_angle),
+            ]
+        )
+        self.servo.move_angle(wait=False)
 
 
 def main():
