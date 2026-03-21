@@ -865,6 +865,7 @@ class CircleTrackerGUI:
                 # 处理激光对准逻辑
                 laser_spot_display = None
                 laser_found = False
+                laser_binary_display = None # 用于保存要显示的二值化图像
                 
                 if s.get("laser_align_mode", False) and green_data is not None:
                     # 【指示对准模式】尝试寻找激光光斑
@@ -872,6 +873,8 @@ class CircleTrackerGUI:
                     # 并且 offset_x, offset_y 记录了它在全图中的偏移量
                     blurred_green, offset_x, offset_y, scale = green_data
                     _, binary = cv2.threshold(blurred_green, s.get("laser_threshold", 240), 255, cv2.THRESH_BINARY)
+                    laser_binary_display = binary # 保存二值化结果
+                    
                     num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary, connectivity=8)
                     
                     if num_labels > 1:
@@ -1042,13 +1045,33 @@ class CircleTrackerGUI:
                     # 在图上添加文字说明
                     cv2.putText(full_green, "Green Channel (Processed)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
                     
-                    # 水平拼接
-                    frame_rgb_show = np.hstack((frame_rgb_disp, full_green))
+                    # 准备二值化图像用于显示 (如果存在)
+                    if laser_binary_display is not None:
+                        # 转为3通道以拼接
+                        bin_rgb = cv2.cvtColor(laser_binary_display, cv2.COLOR_GRAY2RGB)
+                        full_bin = np.zeros_like(frame_rgb_disp)
+                        bin_resized = cv2.resize(bin_rgb, (orig_w, orig_h))
+                        if roi_h > 0 and roi_w > 0:
+                            full_bin[offset_y:end_y, offset_x:end_x] = bin_resized[:roi_h, :roi_w]
+                        cv2.putText(full_bin, "Laser Binary Mask", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+                    else:
+                        full_bin = np.zeros_like(frame_rgb_disp)
+                        cv2.putText(full_bin, "Laser Binary (Disabled)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (128, 128, 128), 2)
+                    
+                    # 2x2 拼接：
+                    # [ 彩色原图 ] [ 绿色通道 ]
+                    # [ 二值化图 ] [ 黑底空图 ]
+                    empty_black = np.zeros_like(frame_rgb_disp)
+                    top_row = np.hstack((frame_rgb_disp, full_green))
+                    bottom_row = np.hstack((full_bin, empty_black))
+                    frame_rgb_show = np.vstack((top_row, bottom_row))
                 else:
-                    # 如果还没有处理好的图，就用黑图补齐
+                    # 如果还没有处理好的图，就用黑图补齐 2x2 布局
                     full_black = np.zeros_like(frame_rgb_disp)
-                    cv2.putText(full_black, "Green Channel (Waiting...)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                    frame_rgb_show = np.hstack((frame_rgb_disp, full_black))
+                    cv2.putText(full_black, "Waiting...", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                    top_row = np.hstack((frame_rgb_disp, full_black))
+                    bottom_row = np.hstack((full_black, full_black))
+                    frame_rgb_show = np.vstack((top_row, bottom_row))
 
                 payload = (
                     frame_rgb_show,
