@@ -11,7 +11,7 @@ class SerialTransport:
     可以在 _before_write / _before_read 里加 GPIO 切换。
     """
 
-    def __init__(self, port: str, baudrate: int = 115200, timeout: float = 0.1):
+    def __init__(self, port: str, baudrate: int = 115200, timeout: float = 0.5):
         if serial is None:
             raise ModuleNotFoundError("pyserial is required: pip install pyserial")
         self.ser = serial.Serial(
