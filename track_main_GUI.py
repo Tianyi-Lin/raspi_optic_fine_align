@@ -778,8 +778,9 @@ class CircleTrackerGUI:
             self._ensure_camera()
             self.running = True
             
-            # 进入 GUI 并启动运行时，立即回正舵机
-            self._center_servos()
+            # 进入 GUI 并启动运行时，如果连接了舵机，立即回正
+            if self.servo is not None:
+                self._center_servos()
             
             self.worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
             self.worker_thread.start()
@@ -805,8 +806,7 @@ class CircleTrackerGUI:
         self.tracking_active = False
         if self.running:
             self.status_text.set("检测中（未跟踪）")
-        # 停止时强制回正
-        self._center_servos()
+        # 停止时不再回正，直接原地保持
 
     def reset_axes(self):
         self.pid_x.reset()
