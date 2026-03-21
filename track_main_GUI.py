@@ -37,6 +37,10 @@ class Kalman2D:
         self.initialized = True
         self.last_estimate = (float(x), float(y))
 
+    def update_params(self, process_noise, measurement_noise):
+        self.kf.processNoiseCov = np.eye(4, dtype=np.float32) * float(process_noise)
+        self.kf.measurementNoiseCov = np.eye(2, dtype=np.float32) * float(measurement_noise)
+
     def update(self, measurement):
         if measurement is not None and not self.initialized:
             self.reset(measurement[0], measurement[1])
@@ -131,6 +135,10 @@ class CircleTrackerGUI:
         self.tilt_min = tk.DoubleVar(value=-90.0)
         self.tilt_max = tk.DoubleVar(value=90.0)
         
+        # 卡尔曼滤波参数
+        self.kalman_process_noise = tk.DoubleVar(value=0.03)
+        self.kalman_measurement_noise = tk.DoubleVar(value=0.4)
+        
         # 硬件物理边界（从舵机读取）
         self.hw_pan_min = tk.DoubleVar(value=-90.0)
         self.hw_pan_max = tk.DoubleVar(value=90.0)
@@ -193,6 +201,8 @@ class CircleTrackerGUI:
             "hw_pan_max": 90.0,
             "hw_tilt_min": -90.0,
             "hw_tilt_max": 90.0,
+            "kalman_process_noise": 0.03,
+            "kalman_measurement_noise": 0.4,
         }
         def safe_int(var, key):
             try:
@@ -246,9 +256,11 @@ class CircleTrackerGUI:
                 "y_bias": safe_int(self.y_bias, "y_bias"),
                 "pan_min": safe_float(self.pan_min, "pan_min"),
                 "pan_max": safe_float(self.pan_max, "pan_max"),
-                "tilt_min": safe_float(self.tilt_min, "tilt_min"),
-                "tilt_max": safe_float(self.tilt_max, "tilt_max"),
-            }
+            "tilt_min": safe_float(self.tilt_min, "tilt_min"),
+            "tilt_max": safe_float(self.tilt_max, "tilt_max"),
+            "kalman_process_noise": safe_float(self.kalman_process_noise, "kalman_process_noise"),
+            "kalman_measurement_noise": safe_float(self.kalman_measurement_noise, "kalman_measurement_noise"),
+        }
 
     def _get_settings(self):
         # 实时从GUI变量读取，确保修改立即生效
@@ -285,6 +297,8 @@ class CircleTrackerGUI:
             "pan_max": 90.0,
             "tilt_min": -90.0,
             "tilt_max": 90.0,
+            "kalman_process_noise": 0.03,
+            "kalman_measurement_noise": 0.4,
         }
         def safe_int(var, key):
             try:
@@ -336,6 +350,8 @@ class CircleTrackerGUI:
             "pan_max": safe_float(self.pan_max, "pan_max"),
             "tilt_min": safe_float(self.tilt_min, "tilt_min"),
             "tilt_max": safe_float(self.tilt_max, "tilt_max"),
+            "kalman_process_noise": safe_float(self.kalman_process_noise, "kalman_process_noise"),
+            "kalman_measurement_noise": safe_float(self.kalman_measurement_noise, "kalman_measurement_noise"),
             "hw_pan_min": safe_float(self.hw_pan_min, "hw_pan_min"),
             "hw_pan_max": safe_float(self.hw_pan_max, "hw_pan_max"),
             "hw_tilt_min": safe_float(self.hw_tilt_min, "hw_tilt_min"),
@@ -388,6 +404,8 @@ class CircleTrackerGUI:
             "pan_max": self.pan_max,
             "tilt_min": self.tilt_min,
             "tilt_max": self.tilt_max,
+            "kalman_process_noise": self.kalman_process_noise,
+            "kalman_measurement_noise": self.kalman_measurement_noise,
         }
         for key, var in var_map.items():
             if key not in data:
@@ -440,6 +458,8 @@ class CircleTrackerGUI:
                 "pan_max": float(self.pan_max.get()),
                 "tilt_min": float(self.tilt_min.get()),
                 "tilt_max": float(self.tilt_max.get()),
+                "kalman_process_noise": float(self.kalman_process_noise.get()),
+                "kalman_measurement_noise": float(self.kalman_measurement_noise.get()),
             }
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
@@ -540,6 +560,17 @@ class CircleTrackerGUI:
         ttk.Label(common, text="误差小于此值时不响应，避免抖动", font=("", 8), foreground="gray").grid(row=r2-1, column=2, sticky="w", padx=(6, 0))
         r2 = self._grid_slider(common, r2, 0, "最大角速度(度/秒)", self.max_delta_deg_per_sec, 1.0, 500.0)
         ttk.Label(common, text="限制舵机转动速度，10-60度/秒较平滑", font=("", 8), foreground="gray").grid(row=r2-1, column=2, sticky="w", padx=(6, 0))
+
+        # 卡尔曼滤波参数配置
+        kalman_frame = ttk.LabelFrame(tab_pid, text="卡尔曼滤波 (Kalman Filter)", padding=8)
+        kalman_frame.pack(fill=tk.X, pady=(10, 0))
+        kalman_frame.columnconfigure(0, weight=1)
+        kalman_frame.columnconfigure(1, weight=1)
+        rk = 0
+        rk = self._grid_slider(kalman_frame, rk, 0, "过程噪声(运动不可预测性)", self.kalman_process_noise, 0.001, 0.5)
+        ttk.Label(kalman_frame, text="越小:平滑但延迟大; 越大:响应快但易抖动", font=("", 8), foreground="gray").grid(row=rk-1, column=2, sticky="w", padx=(6, 0))
+        rk = self._grid_slider(kalman_frame, rk, 0, "测量噪声(检测结果不稳定性)", self.kalman_measurement_noise, 0.01, 5.0)
+        ttk.Label(kalman_frame, text="越大:平滑防抖强; 越小:极度信任视觉检测", font=("", 8), foreground="gray").grid(row=rk-1, column=2, sticky="w", padx=(6, 0))
 
         # 舵机范围配置
         servo_range = ttk.LabelFrame(tab_pid, text="舵机角度范围", padding=8)
@@ -781,6 +812,8 @@ class CircleTrackerGUI:
 
                 self.pid_x.set_gains(s["kp_x"], s["ki_x"], s["kd_x"])
                 self.pid_y.set_gains(s["kp_y"], s["ki_y"], s["kd_y"])
+                
+                self.kalman.update_params(s["kalman_process_noise"], s["kalman_measurement_noise"])
 
                 error_x = float(center_x) - target_x
                 error_y = float(center_y) - target_y
