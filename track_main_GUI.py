@@ -754,18 +754,18 @@ class CircleTrackerGUI:
                 tilt_min = float(s.get("tilt_min", -90.0))
                 tilt_max = float(s.get("tilt_max", 90.0))
 
-                # 检测是否到达边界
-                pan_at_min = self.current_pan_angle <= pan_min
-                pan_at_max = self.current_pan_angle >= pan_max
-                tilt_at_min = self.current_tilt_angle <= tilt_min
-                tilt_at_max = self.current_tilt_angle >= tilt_max
+                # 更新前检测是否已经在边界，用于限制PID方向
+                pan_at_min_before = self.current_pan_angle <= pan_min
+                pan_at_max_before = self.current_pan_angle >= pan_max
+                tilt_at_min_before = self.current_tilt_angle <= tilt_min
+                tilt_at_max_before = self.current_tilt_angle >= tilt_max
 
                 if do_track and s["pan_enabled"]:
                     delta_x = self.pid_x.update(error_x, dt=dt)
                     # 边界限制：如果到达边界，限制向边界方向的移动
-                    if pan_at_min and delta_x < 0:
+                    if pan_at_min_before and delta_x < 0:
                         delta_x = 0  # 禁止向最小边界移动
-                    if pan_at_max and delta_x > 0:
+                    if pan_at_max_before and delta_x > 0:
                         delta_x = 0  # 禁止向最大边界移动
                     desired_pan = self.current_pan_angle + delta_x
                     step_pan = max(-max_step, min(max_step, desired_pan - self.current_pan_angle))
@@ -774,13 +774,19 @@ class CircleTrackerGUI:
                 if do_track and s["tilt_enabled"]:
                     delta_y = self.pid_y.update(error_y, dt=dt)
                     # 边界限制：如果到达边界，限制向边界方向的移动
-                    if tilt_at_min and delta_y < 0:
+                    if tilt_at_min_before and delta_y < 0:
                         delta_y = 0  # 禁止向最小边界移动
-                    if tilt_at_max and delta_y > 0:
+                    if tilt_at_max_before and delta_y > 0:
                         delta_y = 0  # 禁止向最大边界移动
                     desired_tilt = self.current_tilt_angle + delta_y
                     step_tilt = max(-max_step, min(max_step, desired_tilt - self.current_tilt_angle))
                     self.current_tilt_angle = max(tilt_min, min(tilt_max, self.current_tilt_angle + step_tilt))
+
+                # 更新后再次检测是否到达边界，用于视觉提示（消除延迟）
+                pan_at_min = self.current_pan_angle <= pan_min
+                pan_at_max = self.current_pan_angle >= pan_max
+                tilt_at_min = self.current_tilt_angle <= tilt_min
+                tilt_at_max = self.current_tilt_angle >= tilt_max
 
                 if do_track and (s["pan_enabled"] or s["tilt_enabled"]):
                     self.servo.set_angles(
