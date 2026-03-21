@@ -677,21 +677,23 @@ class CircleTrackerGUI:
                 tilt_at_max = self.current_tilt_angle >= tilt_max
 
                 if do_track and s["pan_enabled"]:
-                    # 如果到达边界且误差方向使舵机继续向边界运动，则清零error并重置PID
-                    if (pan_at_min and error_x > 0) or (pan_at_max and error_x < 0):
-                        error_x = 0.0
-                        self.pid_x.reset()
                     delta_x = self.pid_x.update(error_x, dt=dt)
+                    # 边界限制：如果到达边界，限制向边界方向的移动
+                    if pan_at_min and delta_x < 0:
+                        delta_x = 0  # 禁止向最小边界移动
+                    if pan_at_max and delta_x > 0:
+                        delta_x = 0  # 禁止向最大边界移动
                     desired_pan = self.current_pan_angle + delta_x
                     step_pan = max(-max_step, min(max_step, desired_pan - self.current_pan_angle))
                     self.current_pan_angle = max(pan_min, min(pan_max, self.current_pan_angle + step_pan))
 
                 if do_track and s["tilt_enabled"]:
-                    # 如果到达边界且误差方向使舵机继续向边界运动，则清零error并重置PID
-                    if (tilt_at_min and error_y > 0) or (tilt_at_max and error_y < 0):
-                        error_y = 0.0
-                        self.pid_y.reset()
                     delta_y = self.pid_y.update(error_y, dt=dt)
+                    # 边界限制：如果到达边界，限制向边界方向的移动
+                    if tilt_at_min and delta_y < 0:
+                        delta_y = 0  # 禁止向最小边界移动
+                    if tilt_at_max and delta_y > 0:
+                        delta_y = 0  # 禁止向最大边界移动
                     desired_tilt = self.current_tilt_angle + delta_y
                     step_tilt = max(-max_step, min(max_step, desired_tilt - self.current_tilt_angle))
                     self.current_tilt_angle = max(tilt_min, min(tilt_max, self.current_tilt_angle + step_tilt))
