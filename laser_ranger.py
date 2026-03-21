@@ -116,8 +116,13 @@ class LaserRangerMonitor:
             try:
                 waiting = self.serial.in_waiting
                 if waiting > 0:
-                    raw_data = self.serial.read(waiting)
+                    # 限制单次读取最大字节数，避免阻塞太久
+                    raw_data = self.serial.read(min(waiting, 1024))
                     buffer.extend(list(raw_data))
+
+                    # 限制缓冲区大小，防止内存泄漏或过度积压
+                    if len(buffer) > 4096:
+                        buffer = buffer[-4096:]
 
                     while len(buffer) >= self.FRAME_LEN:
                         # 找帧头
@@ -364,7 +369,12 @@ class MonitorGUI:
         x_min = max(0, x[-1] - 15)
         x_max = x[-1] + 0.5
         self.ax_dist.set_xlim(x_min, x_max)
+        self.ax_signal.set_xlim(x_min, x_max)
+        self.ax_status.set_xlim(x_min, x_max)
+        self.ax_valid.set_xlim(x_min, x_max)
+        self.ax_precision.set_xlim(x_min, x_max)
 
+        # 限制纵轴重绘频率或缩小计算范围
         # Distance
         dmin, dmax = min(y_dist), max(y_dist)
         dmargin = max(0.05, (dmax - dmin) * 0.1 if dmax > dmin else 0.1)
@@ -391,9 +401,20 @@ class MonitorGUI:
         self.canvas.draw_idle()
 
     def update_gui(self):
+        # 记录上次更新时间，避免更新过于频繁
+        if not hasattr(self, 'last_plot_time'):
+            self.last_plot_time = time.time()
+            
+        current_time = time.time()
         self._set_info()
-        self._set_plots()
-        self.root.after(100, self.update_gui)
+        
+        # 图表渲染比较耗时，降帧率到 10 FPS (100ms) 足够人眼观看，且不卡 GUI
+        if current_time - self.last_plot_time >= 0.1:
+            self._set_plots()
+            self.last_plot_time = current_time
+            
+        # 文字刷新可以快一点 50ms
+        self.root.after(50, self.update_gui)
 
 
 if __name__ == "__main__":
