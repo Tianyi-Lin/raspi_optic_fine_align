@@ -130,6 +130,12 @@ class CircleTrackerGUI:
         self.pan_max = tk.DoubleVar(value=90.0)
         self.tilt_min = tk.DoubleVar(value=-90.0)
         self.tilt_max = tk.DoubleVar(value=90.0)
+        
+        # 硬件物理边界（从舵机读取）
+        self.hw_pan_min = tk.DoubleVar(value=-90.0)
+        self.hw_pan_max = tk.DoubleVar(value=90.0)
+        self.hw_tilt_min = tk.DoubleVar(value=-90.0)
+        self.hw_tilt_max = tk.DoubleVar(value=90.0)
         self.latest_frame = None
         self.latest_frame_id = 0
         self.latest_detection = None
@@ -173,6 +179,10 @@ class CircleTrackerGUI:
             "pan_max": 90.0,
             "tilt_min": -90.0,
             "tilt_max": 90.0,
+            "hw_pan_min": -90.0,
+            "hw_pan_max": 90.0,
+            "hw_tilt_min": -90.0,
+            "hw_tilt_max": 90.0,
         }
         def safe_int(var, key):
             try:
@@ -316,6 +326,10 @@ class CircleTrackerGUI:
             "pan_max": safe_float(self.pan_max, "pan_max"),
             "tilt_min": safe_float(self.tilt_min, "tilt_min"),
             "tilt_max": safe_float(self.tilt_max, "tilt_max"),
+            "hw_pan_min": safe_float(self.hw_pan_min, "hw_pan_min"),
+            "hw_pan_max": safe_float(self.hw_pan_max, "hw_pan_max"),
+            "hw_tilt_min": safe_float(self.hw_tilt_min, "hw_tilt_min"),
+            "hw_tilt_max": safe_float(self.hw_tilt_max, "hw_tilt_max"),
         }
 
     def _settings_path(self):
@@ -528,6 +542,33 @@ class CircleTrackerGUI:
         r3 += 1
         r3 = self._grid_slider(servo_range, r3, 0, "俯仰最小", self.tilt_min, -90.0, 90.0)
         r3 = self._grid_slider(servo_range, r3, 1, "俯仰最大", self.tilt_max, -90.0, 90.0)
+        
+        # 硬件边界显示
+        hw_range = ttk.LabelFrame(tab_pid, text="舵机物理边界 (硬件读取)", padding=8)
+        hw_range.pack(fill=tk.X, pady=(10, 0))
+        hw_range.columnconfigure(0, weight=1)
+        hw_range.columnconfigure(1, weight=1)
+        ttk.Label(hw_range, text="水平最小:").grid(row=0, column=0, sticky="e")
+        ttk.Label(hw_range, textvariable=tk.StringVar(value=""), name="lbl_hw_pan_min").grid(row=0, column=1, sticky="w", padx=5)
+        ttk.Label(hw_range, text="水平最大:").grid(row=0, column=2, sticky="e")
+        ttk.Label(hw_range, textvariable=tk.StringVar(value=""), name="lbl_hw_pan_max").grid(row=0, column=3, sticky="w", padx=5)
+        ttk.Label(hw_range, text="俯仰最小:").grid(row=1, column=0, sticky="e")
+        ttk.Label(hw_range, textvariable=tk.StringVar(value=""), name="lbl_hw_tilt_min").grid(row=1, column=1, sticky="w", padx=5)
+        ttk.Label(hw_range, text="俯仰最大:").grid(row=1, column=2, sticky="e")
+        ttk.Label(hw_range, textvariable=tk.StringVar(value=""), name="lbl_hw_tilt_max").grid(row=1, column=3, sticky="w", padx=5)
+        
+        # 绑定变量到Label，以便动态更新
+        def update_hw_labels(*args):
+            hw_range.nametowidget("lbl_hw_pan_min").config(text=f"{self.hw_pan_min.get():.1f}°")
+            hw_range.nametowidget("lbl_hw_pan_max").config(text=f"{self.hw_pan_max.get():.1f}°")
+            hw_range.nametowidget("lbl_hw_tilt_min").config(text=f"{self.hw_tilt_min.get():.1f}°")
+            hw_range.nametowidget("lbl_hw_tilt_max").config(text=f"{self.hw_tilt_max.get():.1f}°")
+        
+        self.hw_pan_min.trace_add("write", update_hw_labels)
+        self.hw_pan_max.trace_add("write", update_hw_labels)
+        self.hw_tilt_min.trace_add("write", update_hw_labels)
+        self.hw_tilt_max.trace_add("write", update_hw_labels)
+        update_hw_labels()
 
         tab_vision.columnconfigure(0, weight=1)
         tab_vision.columnconfigure(1, weight=1)
@@ -748,11 +789,12 @@ class CircleTrackerGUI:
                         self.worker_error = str(exc)
                         self.stop_event.set()
                         break
-                # 使用GUI配置的角度范围限制
-                pan_min = float(s.get("pan_min", -90.0))
-                pan_max = float(s.get("pan_max", 90.0))
-                tilt_min = float(s.get("tilt_min", -90.0))
-                tilt_max = float(s.get("tilt_max", 90.0))
+                # 使用GUI配置和硬件物理边界的交集作为最终限制
+                # max(硬件最小, GUI最小) 和 min(硬件最大, GUI最大)
+                pan_min = max(float(s.get("hw_pan_min", -90.0)), float(s.get("pan_min", -90.0)))
+                pan_max = min(float(s.get("hw_pan_max", 90.0)), float(s.get("pan_max", 90.0)))
+                tilt_min = max(float(s.get("hw_tilt_min", -90.0)), float(s.get("tilt_min", -90.0)))
+                tilt_max = min(float(s.get("hw_tilt_max", 90.0)), float(s.get("tilt_max", 90.0)))
 
                 # 更新前检测是否已经在边界，用于限制PID方向
                 pan_at_min_before = self.current_pan_angle <= pan_min
@@ -960,12 +1002,6 @@ class CircleTrackerGUI:
 
     def _ensure_servo(self):
         if self.servo is not None:
-            # 同步更新角度范围到舵机驱动层
-            settings = self._get_settings()
-            self.servo.pan_min_angle = float(settings.get("pan_min", -90.0))
-            self.servo.pan_max_angle = float(settings.get("pan_max", 90.0))
-            self.servo.tilt_min_angle = float(settings.get("tilt_min", -90.0))
-            self.servo.tilt_max_angle = float(settings.get("tilt_max", 90.0))
             return
         settings = self._get_settings()
         self.active_pan_id = settings["pan_id"]
@@ -977,11 +1013,15 @@ class CircleTrackerGUI:
             servo_ids=[self.active_pan_id, self.active_tilt_id],
             moving_time=settings["move_time_ms"],
         )
-        # 从GUI配置同步角度范围到舵机驱动层
-        self.servo.pan_min_angle = float(settings.get("pan_min", -90.0))
-        self.servo.pan_max_angle = float(settings.get("pan_max", 90.0))
-        self.servo.tilt_min_angle = float(settings.get("tilt_min", -90.0))
-        self.servo.tilt_max_angle = float(settings.get("tilt_max", 90.0))
+        # 读取舵机硬件的物理边界并更新到GUI
+        pan_min, pan_max = self.servo.read_hardware_angle_limits(self.active_pan_id)
+        tilt_min, tilt_max = self.servo.read_hardware_angle_limits(self.active_tilt_id)
+        
+        # 使用after以确保在主线程更新GUI
+        self.root.after(0, lambda: self.hw_pan_min.set(pan_min))
+        self.root.after(0, lambda: self.hw_pan_max.set(pan_max))
+        self.root.after(0, lambda: self.hw_tilt_min.set(tilt_min))
+        self.root.after(0, lambda: self.hw_tilt_max.set(tilt_max))
 
     def _detect_circle(self, frame_rgb, *, ksize, min_dist, param1, param2, min_radius, max_radius, roi=None):
         offset_x = 0
