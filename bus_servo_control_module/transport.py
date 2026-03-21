@@ -1,27 +1,46 @@
-from __future__ import annotations
-import serial
 import time
+
+try:
+    import serial
+except ModuleNotFoundError:
+    serial = None
 
 
 class SerialTransport:
+    """
+    半双工串口传输层。
+    如果硬件需要额外控制 TX/RX 方向，
+    可以在 _before_write / _before_read 里加 GPIO 切换。
+    """
+
     def __init__(self, port: str, baudrate: int = 115200, timeout: float = 0.5):
+        if serial is None:
+            raise ModuleNotFoundError("pyserial is required: pip install pyserial")
         self.ser = serial.Serial(
             port=port,
             baudrate=baudrate,
             timeout=timeout,
             bytesize=8,
-            parity="N",
+            parity='N',
             stopbits=1,
         )
 
     def close(self):
         self.ser.close()
 
+    def _before_write(self):
+        pass
+
+    def _before_read(self):
+        pass
+
     def write(self, data: bytes):
-        if hasattr(self, "ser"):
-            self.ser.reset_input_buffer()
+        self._before_write()
+        # 发送指令前清空一下接收缓冲区，避免之前残留的垃圾数据干扰读响应
+        self.ser.reset_input_buffer()
         self.ser.write(data)
         self.ser.flush()
+        # 在发送完指令后，硬性等待 2ms，让半双工总线芯片完成 TX 到 RX 的状态切换
         time.sleep(0.002)
 
     def read_exactly(self, n: int) -> bytes:
@@ -34,23 +53,31 @@ class SerialTransport:
         return bytes(buf)
 
     def read_frame(self) -> bytes:
-        # 对齐 55 55
+        self._before_read()
+
+        # 对齐帧头 0x55 0x55
         first = self.read_exactly(1)
-        while first != b"\x55":
+        while first != b'\x55':
             first = self.read_exactly(1)
 
         second = self.read_exactly(1)
-        while second != b"\x55":
+        while second != b'\x55':
             first = second
-            if first != b"\x55":
+            if first != b'\x55':
                 first = self.read_exactly(1)
             second = self.read_exactly(1)
 
-        # 读 length
-        length_b = self.read_exactly(1)
-        length = length_b[0]
+        # 读取 ID 和 Length
+        head_rest = self.read_exactly(2)
+        servo_id = head_rest[0]
+        length = head_rest[1]
 
-        # length 已经不包括两个帧头，所以后面还要读 length 个字节
-        rest = self.read_exactly(length)
+        # 协议里 Length 包含 Length 自己这个字节
+        # 但这个字节已经读过了，所以后续只需再读 length - 1 字节
+        remain = length - 1
+        if remain <= 0:
+            raise ValueError(f"invalid frame length field: {length}")
 
-        return b"\x55\x55" + bytes([length]) + rest
+        body = self.read_exactly(remain)
+
+        return b'\x55\x55' + bytes([servo_id, length]) + body
