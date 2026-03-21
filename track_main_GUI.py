@@ -14,7 +14,7 @@ from picamera2 import Picamera2, Preview
 
 from PID import PID
 from bus_servo import BusServo
-from laser_ranger import LaserRangerMonitor
+from laser_ranger_passive import LaserRangerQueryMonitor
 
 
 class Kalman2D:
@@ -165,6 +165,9 @@ class CircleTrackerGUI:
         self.last_cam_frame_id = 0
         self.last_cam_time = 0.0
         
+        # 激光测距查询控制
+        self.last_laser_query_time = 0.0
+        
         # 记录激光是否已经进入圆形标志物内部的状态
         self.laser_locked_in_circle = False
 
@@ -185,10 +188,10 @@ class CircleTrackerGUI:
         except Exception as exc:
             print(f"[WARNING] Servo init failed before GUI start: {exc}")
             
-        # 初始化激光测距模块
+        # 初始化激光测距模块 (被动查询模式)
+        # 注意：这里不再调用 start() 开启后台死循环，而是由主循环按需调用 query_once()
         try:
-            self.laser_ranger = LaserRangerMonitor(port="/dev/ttyAMA2", baudrate=115200, history_len=10)
-            self.laser_ranger.start()
+            self.laser_ranger = LaserRangerQueryMonitor(port="/dev/ttyAMA2", baudrate=115200, module_id=0, history_len=10)
         except Exception as exc:
             print(f"[WARNING] Laser Ranger init failed: {exc}")
             
@@ -1037,10 +1040,18 @@ class CircleTrackerGUI:
                     )
                     self.servo.move_angle(wait=False)
 
-                # 获取当前激光测距数据 (如果在死区内)
+                # 获取当前激光测距数据 (如果在死区内，且距离上次查询超过1秒)
                 current_distance = -1.0
                 if self.laser_ranger is not None and abs(error_x) <= deadband and abs(error_y) <= deadband and circle_found:
-                    # 获取最新距离数据 (m 转换为 mm)
+                    now = time.time()
+                    if now - self.last_laser_query_time >= 1.0:
+                        self.last_laser_query_time = now
+                        # 单次发起查询
+                        if self.laser_ranger.query_once():
+                            dist_mm = self.laser_ranger.distance_mm
+                            print(f"[测距结果] 目标对准！当前距离: {dist_mm:.1f} mm, 信号强度: {self.laser_ranger.signal_strength}")
+                            
+                    # 获取最新距离数据用于显示
                     if len(self.laser_ranger.distance_m_data) > 0:
                         current_distance = self.laser_ranger.distance_m_data[-1] * 1000.0
 
@@ -1255,7 +1266,7 @@ class CircleTrackerGUI:
                 if abs(error_x) <= deadband and abs(error_y) <= deadband and circle_found:
                     cv2.putText(frame_rgb_disp, "ALIGNMENT COMPLETE (IN DEADBAND)", (10, h - 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
                     if current_distance > 0:
-                        cv2.putText(frame_rgb_disp, f"Distance: {current_distance:.1f} mm", (10, h - 70), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
+                        cv2.putText(frame_rgb_disp, f"Distance: {current_distance:.1f} mm (Updated 1s)", (10, h - 70), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
                 
                 top_row = np.hstack((frame_rgb_disp, full_green))
                 bottom_row = np.hstack((full_red, full_bin))
