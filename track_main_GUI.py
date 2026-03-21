@@ -650,6 +650,13 @@ class CircleTrackerGUI:
         cam.columnconfigure(0, weight=1)
         rc = 0
         rc = self._grid_slider(cam, rc, 0, "相机FPS", self.camera_fps, 10, 120)
+        
+        # 添加红色警告提示Label (初始隐藏或为空)
+        self.fps_warning_var = tk.StringVar(value="")
+        self.fps_warning_label = ttk.Label(cam, textvariable=self.fps_warning_var, foreground="red", font=("", 9, "bold"))
+        self.fps_warning_label.grid(row=rc, column=0, sticky="w", pady=(0, 4))
+        rc += 1
+        
         ttk.Checkbutton(cam, text="自动曝光", variable=self.ae_enable).grid(row=rc, column=0, sticky="w", pady=(2, 8))
         rc += 1
         rc = self._grid_slider(cam, rc, 0, "曝光(us)", self.exposure_value, 100, 100000)
@@ -1085,6 +1092,21 @@ class CircleTrackerGUI:
             self.status_text.set(
                 f"相机FPS={self.fps_cam:.1f}  控制Hz={self.fps_ctrl:.1f}  水平={pan:.2f}  俯仰={tilt:.2f}  误差X={error_x:.1f}  误差Y={error_y:.1f}  圆={int(circle_found)}  半径={radius}  跟踪={int(do_track)}"
             )
+            
+            # 检测并更新FPS与曝光冲突警告
+            target_fps = self.camera_fps.get()
+            current_exposure = self.exposure_value.get()
+            is_auto_exposure = self.ae_enable.get()
+            
+            if target_fps > 0 and not is_auto_exposure:
+                frame_duration_us = int(1000000 / target_fps)
+                if current_exposure > frame_duration_us:
+                    actual_max_fps = int(1000000 / current_exposure)
+                    self.fps_warning_var.set(f"⚠️ 曝光过长! 帧率被强制降至 ≤ {actual_max_fps} FPS")
+                else:
+                    self.fps_warning_var.set("")
+            else:
+                self.fps_warning_var.set("")
 
         self.after_id = self.root.after(30, self._ui_loop)
 
