@@ -15,7 +15,6 @@ from PIL import Image, ImageTk
 from picamera2 import Picamera2, Preview
 
 from PID import PID
-from bus_servo import BusServo
 from laser_ranger_passive import LaserRangerQueryMonitor
 from laser_ranger_setting import configure_laser_module
 
@@ -152,6 +151,7 @@ class CircleTrackerGUI:
         self.last_servo_status_time = 0.0
         self._board_transport_cls = None
         self._board_driver_cls = None
+        self._bus_servo_cls = None
 
         self.port = tk.StringVar(value="/dev/ttyAMA1")
         # self.baudrate = tk.IntVar(value=115200)
@@ -1532,6 +1532,14 @@ class CircleTrackerGUI:
         self._board_transport_cls = board_transport.SerialTransport
         self._board_driver_cls = board_driver.BusServoBoardDriver
 
+    def _get_bus_servo_cls(self):
+        if self._bus_servo_cls is not None:
+            return self._bus_servo_cls
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        bus_servo_module = _load_module("_bus_servo_module", os.path.join(base_dir, "bus_servo.py"))
+        self._bus_servo_cls = bus_servo_module.BusServo
+        return self._bus_servo_cls
+
     def _release_servo(self):
         if self.servo is not None:
             try:
@@ -1602,7 +1610,8 @@ class CircleTrackerGUI:
             self.hw_tilt_max.set(float(settings.get("tilt_max", 90.0)))
             self.servo_status_mode.set(settings.get("servo_mode"))
             return
-        self.servo = BusServo(
+        bus_servo_cls = self._get_bus_servo_cls()
+        self.servo = bus_servo_cls(
             port=settings["port"],
             baudrate=settings["baudrate"],
             servo_num=2,
