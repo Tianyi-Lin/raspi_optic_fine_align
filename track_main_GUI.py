@@ -1347,23 +1347,18 @@ class CircleTrackerGUI:
 
 
 def main():
-    root = tk.Tk()
-    root.title("Raspi Optic Fine Align")
-    # 不再硬编码窗口大小，让 Tkinter 根据内部控件内容（左侧面板 + 拼接后的双图像）自动计算并撑开窗口
-    # root.geometry("1720x760") 
-    
-    # 使用 ttkthemes 设置更现代的主题，使复选框显示更清晰（带明显的勾选样式）
     try:
         from ttkthemes import ThemedTk
         root = ThemedTk(theme="arc") # "arc" 主题的复选框带有清晰的蓝色勾选标记
-        root.title("Raspi Optic Fine Align")
     except ImportError:
-        # 如果没有安装 ttkthemes，则回退到 'alt' 主题，它的复选框显示为正常的打勾，而不是 clam 主题的叉号
+        root = tk.Tk()
+        # 如果没有安装 ttkthemes，则回退到 'alt' 主题，它的复选框显示为正常的打勾
         try:
             ttk.Style().theme_use('alt')
         except:
             pass
 
+    root.title("Raspi Optic Fine Align")
     # 允许用户根据需要自适应调整
     root.resizable(True, True)
     app = CircleTrackerGUI(root)
