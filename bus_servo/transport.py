@@ -1,3 +1,5 @@
+import time
+
 try:
     import serial
 except ModuleNotFoundError:
@@ -38,6 +40,8 @@ class SerialTransport:
         self.ser.reset_input_buffer()
         self.ser.write(data)
         self.ser.flush()
+        # 在发送完指令后，硬性等待 2ms，让半双工总线芯片完成 TX 到 RX 的状态切换
+        time.sleep(0.002)
 
     def read_exactly(self, n: int) -> bytes:
         buf = bytearray()

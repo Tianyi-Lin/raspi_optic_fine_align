@@ -16,7 +16,7 @@ def build_parser():
     parser.add_argument("--id", dest="servo_id", type=int, required=True)
     parser.add_argument("--pos", type=int, required=True, help="目标位置，0~1000")
     parser.add_argument("--time", dest="time_ms", type=int, default=500, help="运动时间 ms")
-    parser.add_argument("--timeout", type=float, default=0.1, help="串口读超时，秒")
+    parser.add_argument("--timeout", type=float, default=0.5, help="串口读超时，秒")
     parser.add_argument(
         "--tolerance",
         type=int,
@@ -26,8 +26,8 @@ def build_parser():
     parser.add_argument(
         "--poll-interval",
         type=float,
-        default=0.05,
-        help="轮询位置间隔，默认 0.05 秒",
+        default=0.1,
+        help="轮询位置间隔，默认 0.1 秒",
     )
     parser.add_argument(
         "--max-wait",
