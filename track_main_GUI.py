@@ -125,6 +125,11 @@ class CircleTrackerGUI:
         self.x_bias = tk.IntVar(value=0)
         self.y_bias = tk.IntVar(value=0)
         self.status_text = tk.StringVar(value="就绪")
+        # 舵机角度范围配置（角度制）
+        self.pan_min = tk.DoubleVar(value=-90.0)
+        self.pan_max = tk.DoubleVar(value=90.0)
+        self.tilt_min = tk.DoubleVar(value=-90.0)
+        self.tilt_max = tk.DoubleVar(value=90.0)
         self.latest_frame = None
         self.latest_frame_id = 0
         self.latest_detection = None
@@ -164,6 +169,10 @@ class CircleTrackerGUI:
             "max_radius": 120,
             "x_bias": 0,
             "y_bias": 0,
+            "pan_min": -90.0,
+            "pan_max": 90.0,
+            "tilt_min": -90.0,
+            "tilt_max": 90.0,
         }
         def safe_int(var, key):
             try:
@@ -215,6 +224,10 @@ class CircleTrackerGUI:
                 "max_radius": safe_int(self.max_radius, "max_radius"),
                 "x_bias": safe_int(self.x_bias, "x_bias"),
                 "y_bias": safe_int(self.y_bias, "y_bias"),
+                "pan_min": safe_float(self.pan_min, "pan_min"),
+                "pan_max": safe_float(self.pan_max, "pan_max"),
+                "tilt_min": safe_float(self.tilt_min, "tilt_min"),
+                "tilt_max": safe_float(self.tilt_max, "tilt_max"),
             }
 
     def _get_settings(self):
@@ -263,6 +276,10 @@ class CircleTrackerGUI:
             "max_radius": self.max_radius,
             "x_bias": self.x_bias,
             "y_bias": self.y_bias,
+            "pan_min": self.pan_min,
+            "pan_max": self.pan_max,
+            "tilt_min": self.tilt_min,
+            "tilt_max": self.tilt_max,
         }
         for key, var in var_map.items():
             if key not in data:
@@ -310,6 +327,10 @@ class CircleTrackerGUI:
             "max_radius": int(self.max_radius.get()),
             "x_bias": int(self.x_bias.get()),
             "y_bias": int(self.y_bias.get()),
+            "pan_min": float(self.pan_min.get()),
+            "pan_max": float(self.pan_max.get()),
+            "tilt_min": float(self.tilt_min.get()),
+            "tilt_max": float(self.tilt_max.get()),
         }
         try:
             with open(path, "w", encoding="utf-8") as f:
@@ -408,6 +429,18 @@ class CircleTrackerGUI:
         r2 = 0
         r2 = self._grid_slider(common, r2, 0, "死区", self.error_deadband, 0.0, 30.0)
         r2 = self._grid_slider(common, r2, 0, "最大角速度", self.max_delta_deg_per_sec, 1.0, 200.0)
+
+        # 舵机范围配置
+        servo_range = ttk.LabelFrame(tab_pid, text="舵机角度范围", padding=8)
+        servo_range.pack(fill=tk.X, pady=(10, 0))
+        servo_range.columnconfigure(0, weight=1)
+        servo_range.columnconfigure(1, weight=1)
+        r3 = 0
+        r3 = self._grid_slider(servo_range, r3, 0, "水平最小", self.pan_min, -90.0, 0.0)
+        r3 = self._grid_slider(servo_range, r3, 1, "水平最大", self.pan_max, 0.0, 90.0)
+        r3 += 1
+        r3 = self._grid_slider(servo_range, r3, 0, "俯仰最小", self.tilt_min, -90.0, 0.0)
+        r3 = self._grid_slider(servo_range, r3, 1, "俯仰最大", self.tilt_max, 0.0, 90.0)
 
         tab_vision.columnconfigure(0, weight=1)
         tab_vision.columnconfigure(1, weight=1)
@@ -601,17 +634,23 @@ class CircleTrackerGUI:
                         self.worker_error = str(exc)
                         self.stop_event.set()
                         break
+                # 使用GUI配置的角度范围限制
+                pan_min = float(s.get("pan_min", -90.0))
+                pan_max = float(s.get("pan_max", 90.0))
+                tilt_min = float(s.get("tilt_min", -90.0))
+                tilt_max = float(s.get("tilt_max", 90.0))
+
                 if do_track and s["pan_enabled"]:
                     delta_x = self.pid_x.update(error_x, dt=dt)
                     desired_pan = self.current_pan_angle + delta_x
                     step_pan = max(-max_step, min(max_step, desired_pan - self.current_pan_angle))
-                    self.current_pan_angle = max(-90.0, min(90.0, self.current_pan_angle + step_pan))
+                    self.current_pan_angle = max(pan_min, min(pan_max, self.current_pan_angle + step_pan))
 
                 if do_track and s["tilt_enabled"]:
                     delta_y = self.pid_y.update(error_y, dt=dt)
                     desired_tilt = self.current_tilt_angle + delta_y
                     step_tilt = max(-max_step, min(max_step, desired_tilt - self.current_tilt_angle))
-                    self.current_tilt_angle = max(-90.0, min(90.0, self.current_tilt_angle + step_tilt))
+                    self.current_tilt_angle = max(tilt_min, min(tilt_max, self.current_tilt_angle + step_tilt))
 
                 if do_track and (s["pan_enabled"] or s["tilt_enabled"]):
                     self.servo.set_angles(
@@ -764,6 +803,12 @@ class CircleTrackerGUI:
 
     def _ensure_servo(self):
         if self.servo is not None:
+            # 同步更新角度范围到舵机驱动层
+            settings = self._get_settings()
+            self.servo.pan_min_angle = float(settings.get("pan_min", -90.0))
+            self.servo.pan_max_angle = float(settings.get("pan_max", 90.0))
+            self.servo.tilt_min_angle = float(settings.get("tilt_min", -90.0))
+            self.servo.tilt_max_angle = float(settings.get("tilt_max", 90.0))
             return
         settings = self._get_settings()
         self.active_pan_id = settings["pan_id"]
@@ -775,6 +820,11 @@ class CircleTrackerGUI:
             servo_ids=[self.active_pan_id, self.active_tilt_id],
             moving_time=settings["move_time_ms"],
         )
+        # 从GUI配置同步角度范围到舵机驱动层
+        self.servo.pan_min_angle = float(settings.get("pan_min", -90.0))
+        self.servo.pan_max_angle = float(settings.get("pan_max", 90.0))
+        self.servo.tilt_min_angle = float(settings.get("tilt_min", -90.0))
+        self.servo.tilt_max_angle = float(settings.get("tilt_max", 90.0))
 
     def _detect_circle(self, frame_rgb, *, ksize, min_dist, param1, param2, min_radius, max_radius, roi=None):
         offset_x = 0
