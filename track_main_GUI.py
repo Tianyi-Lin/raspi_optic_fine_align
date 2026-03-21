@@ -869,10 +869,9 @@ class CircleTrackerGUI:
                 
                 if s.get("laser_align_mode", False) and green_data is not None:
                     # 【指示对准模式】尝试寻找激光光斑
-                    # 注意：green_data 中的 blurred_green 已经是经过 ROI 裁切（如果启用了 ROI）和降采样的图像
-                    # 并且 offset_x, offset_y 记录了它在全图中的偏移量
-                    blurred_green, offset_x, offset_y, scale = green_data
-                    _, binary = cv2.threshold(blurred_green, s.get("laser_threshold", 240), 255, cv2.THRESH_BINARY)
+                    # 注意：现在我们在红色通道 (blurred_red) 中找激光
+                    blurred_green, blurred_red, offset_x, offset_y, scale = green_data
+                    _, binary = cv2.threshold(blurred_red, s.get("laser_threshold", 240), 255, cv2.THRESH_BINARY)
                     laser_binary_display = binary # 保存二值化结果
                     
                     num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary, connectivity=8)
@@ -1002,7 +1001,7 @@ class CircleTrackerGUI:
                 frame_rgb_disp = cv2.cvtColor(frame_rgb, cv2.COLOR_BGR2RGB)
                 
                 if green_data is not None:
-                    blurred_green, offset_x, offset_y, scale = green_data
+                    blurred_green, blurred_red, offset_x, offset_y, scale = green_data
                     
                     # 创建一个全黑的RGB图像用于放绿色通道
                     green_rgb = np.zeros((blurred_green.shape[0], blurred_green.shape[1], 3), dtype=np.uint8)
@@ -1047,16 +1046,18 @@ class CircleTrackerGUI:
                     
                     # 准备二值化图像用于显示 (如果存在)
                     if laser_binary_display is not None:
-                        # 转为3通道以拼接
-                        bin_rgb = cv2.cvtColor(laser_binary_display, cv2.COLOR_GRAY2RGB)
+                        # 激光是在红色通道找的，所以我们把它涂成红色显示
+                        bin_rgb = np.zeros((laser_binary_display.shape[0], laser_binary_display.shape[1], 3), dtype=np.uint8)
+                        bin_rgb[:, :, 0] = laser_binary_display # RGB顺序，索引0是红色(由于我们要用hstack和disp拼，disp已经是RGB了)
+                        
                         full_bin = np.zeros_like(frame_rgb_disp)
                         bin_resized = cv2.resize(bin_rgb, (orig_w, orig_h))
                         if roi_h > 0 and roi_w > 0:
                             full_bin[offset_y:end_y, offset_x:end_x] = bin_resized[:roi_h, :roi_w]
-                        cv2.putText(full_bin, "Laser Binary Mask", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+                        cv2.putText(full_bin, "Laser Mask (Red Channel)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
                     else:
                         full_bin = np.zeros_like(frame_rgb_disp)
-                        cv2.putText(full_bin, "Laser Binary (Disabled)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (128, 128, 128), 2)
+                        cv2.putText(full_bin, "Laser Mask (Disabled)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (128, 128, 128), 2)
                     
                     # 2x2 拼接：
                     # [ 彩色原图 ] [ 绿色通道 ]
@@ -1324,18 +1325,26 @@ class CircleTrackerGUI:
         small_w = max(1, int(w * scale))
         small_h = max(1, int(h * scale))
         frame_small = cv2.resize(frame_rgb, (small_w, small_h), interpolation=cv2.INTER_AREA)
+        # 注意: OpenCV 的 frame_rgb 在这里其实是 BGR 格式
+        # frame_small[:, :, 0] = B (Blue)
+        # frame_small[:, :, 1] = G (Green)
+        # frame_small[:, :, 2] = R (Red)
         green = frame_small[:, :, 1]
+        red = frame_small[:, :, 2] # 提取红色通道用于找激光光斑
+        
         ksize = int(ksize)
         if ksize < 3:
             ksize = 3
         if ksize % 2 == 0:
             ksize += 1
-        blurred = cv2.GaussianBlur(green, (ksize, ksize), 1)
+        blurred_green = cv2.GaussianBlur(green, (ksize, ksize), 1)
+        blurred_red = cv2.GaussianBlur(red, (ksize, ksize), 1)
+        
         min_dist = max(1, int(int(min_dist) * scale))
         min_radius = max(0, int(int(min_radius) * scale))
         max_radius = max(0, int(int(max_radius) * scale))
         circles = cv2.HoughCircles(
-            blurred,
+            blurred_green,
             cv2.HOUGH_GRADIENT,
             dp=1,
             minDist=min_dist,
@@ -1345,13 +1354,13 @@ class CircleTrackerGUI:
             maxRadius=max_radius,
         )
         if circles is None:
-            return None, blurred, offset_x, offset_y, scale
+            return None, blurred_green, blurred_red, offset_x, offset_y, scale
         circles = np.round(circles[0]).astype(int)
         chosen = max(circles, key=lambda c: c[2])
         x = int(round(chosen[0] / scale)) + offset_x
         y = int(round(chosen[1] / scale)) + offset_y
         r = int(round(chosen[2] / scale))
-        return (x, y, r), blurred, offset_x, offset_y, scale
+        return (x, y, r), blurred_green, blurred_red, offset_x, offset_y, scale
 
     def _draw_overlay(self, frame, center, detection, target, pred, radius, error, dt, bounds=None, laser_spot=None):
         # 确保所有坐标都是整数，避免 OpenCV 报 "can't parse center" 错误
