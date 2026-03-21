@@ -152,7 +152,7 @@ class CircleTrackerGUI:
         self._board_transport_cls = None
         self._board_driver_cls = None
 
-        self.port = tk.StringVar(value="/dev/ttyUSB0")
+        self.port = tk.StringVar(value="/dev/ttyAMA1")
         self.baudrate = tk.IntVar(value=115200)
         self.pan_id = tk.IntVar(value=1)
         self.tilt_id = tk.IntVar(value=2)
@@ -234,7 +234,7 @@ class CircleTrackerGUI:
         
         # 1. 强制配置激光测距模块为查询模式 (Passive / Inquire)
         configure_laser_module(
-            port="/dev/ttyAMA1", 
+            port="/dev/ttyAMA3", 
             baudrate=115200, 
             module_id=0,
             output_mode="inquire",
@@ -260,7 +260,7 @@ class CircleTrackerGUI:
         # 3. 初始化激光测距模块 (被动查询模式)
         # 注意：这里不再调用 start() 开启后台死循环，而是由主循环按需调用 query_once()
         try:
-            self.laser_ranger = LaserRangerQueryMonitor(port="/dev/ttyAMA1", baudrate=115200, module_id=0, history_len=10)
+            self.laser_ranger = LaserRangerQueryMonitor(port="/dev/ttyAMA3", baudrate=115200, module_id=0, history_len=10)
         except Exception as exc:
             print(f"[WARNING] Laser Ranger init failed: {exc}")
             
@@ -372,7 +372,7 @@ class CircleTrackerGUI:
         # 实时从GUI变量读取，确保修改立即生效
         defaults = {
             "servo_mode": "调试板",
-            "port": "/dev/ttyUSB0",
+            "port": "/dev/ttyAMA1",
             "baudrate": 115200,
             "pan_id": 1,
             "tilt_id": 2,
