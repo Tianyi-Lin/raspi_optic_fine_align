@@ -302,7 +302,7 @@ class MonitorGUI:
     def __init__(self, root, monitor):
         self.root = root
         self.monitor = monitor
-        self.root.title("TOF Laser Ranger Query Monitor / UART ttyAMA2")
+        self.root.title("TOF Laser Ranger Query Monitor / UART ttyAMA1")
         self.root.geometry("1320x980")
 
         self._build_top_info_panel()
@@ -315,7 +315,7 @@ class MonitorGUI:
 
         title = ttk.Label(
             top_frame,
-            text="TOF 激光测距监控面板（UART 查询模式 /dev/ttyAMA2）",
+            text="TOF 激光测距监控面板（UART 查询模式 /dev/ttyAMA1）",
             font=("Arial", 16, "bold")
         )
         title.pack(anchor="w", pady=(0, 8))
