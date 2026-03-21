@@ -8,7 +8,7 @@ def build_parser():
     parser = argparse.ArgumentParser(
         description="总线舵机控制板测试：读取指定舵机信息"
     )
-    parser.add_argument("--port", type=str, default="/dev/ttyAMA0")
+    parser.add_argument("--port", type=str, default="/dev/ttyAMA1")
     parser.add_argument("--baudrate", type=int, default=9600)
     parser.add_argument("--id", dest="servo_id", type=int, required=True)
     parser.add_argument("--timeout", type=float, default=1.0)

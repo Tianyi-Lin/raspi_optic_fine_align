@@ -20,7 +20,7 @@ class LaserRangerQueryMonitor:
     - 接收并解析返回的 Frame0 数据
     """
 
-    def __init__(self, port="/dev/ttyAMA1", baudrate=115200, module_id=0, query_interval=0.1, history_len=500):
+    def __init__(self, port="/dev/ttyAMA3", baudrate=115200, module_id=0, query_interval=0.1, history_len=500):
         self.port = port
         self.baudrate = baudrate
         self.module_id = module_id
@@ -302,7 +302,7 @@ class MonitorGUI:
     def __init__(self, root, monitor):
         self.root = root
         self.monitor = monitor
-        self.root.title("TOF Laser Ranger Query Monitor / UART ttyAMA1")
+        self.root.title("TOF Laser Ranger Query Monitor / UART ttyAMA3")
         self.root.geometry("1320x980")
 
         self._build_top_info_panel()
@@ -315,7 +315,7 @@ class MonitorGUI:
 
         title = ttk.Label(
             top_frame,
-            text="TOF 激光测距监控面板（UART 查询模式 /dev/ttyAMA1）",
+            text="TOF 激光测距监控面板（UART 查询模式 /dev/ttyAMA3）",
             font=("Arial", 16, "bold")
         )
         title.pack(anchor="w", pady=(0, 8))
@@ -505,7 +505,7 @@ class MonitorGUI:
 
 if __name__ == "__main__":
     monitor = LaserRangerQueryMonitor(
-        port="/dev/ttyAMA1",
+        port="/dev/ttyAMA3",
         baudrate=115200,
         module_id=0,
         query_interval=0.1,   # 100ms 查询一次

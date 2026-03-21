@@ -30,7 +30,7 @@ class LaserRangerMonitor:
     Byte 15  : checksum = sum(byte[0:15]) % 256
     """
 
-    def __init__(self, port="/dev/ttyAMA1", baudrate=115200, history_len=500):
+    def __init__(self, port="/dev/ttyAMA3", baudrate=115200, history_len=500):
         self.port = port
         self.baudrate = baudrate
         self.serial = None
@@ -205,7 +205,7 @@ class MonitorGUI:
     def __init__(self, root, monitor: LaserRangerMonitor):
         self.root = root
         self.monitor = monitor
-        self.root.title("TOF Laser Ranger Monitor / UART ttyAMA1")
+        self.root.title("TOF Laser Ranger Monitor / UART ttyAMA3")
         self.root.geometry("1300x950")
 
         self._build_top_info_panel()
@@ -219,7 +219,7 @@ class MonitorGUI:
 
         title = ttk.Label(
             top_frame,
-            text="TOF 激光测距监控面板（UART /dev/ttyAMA1）",
+            text="TOF 激光测距监控面板（UART /dev/ttyAMA3）",
             font=("Arial", 16, "bold")
         )
         title.pack(anchor="w", pady=(0, 8))
@@ -422,7 +422,7 @@ if __name__ == "__main__":
     # 测试脚本启动时，先强制将模块配置为 active 主动输出模式
     print("[INFO] 正在强制配置激光模块为主动输出模式 (Active)...")
     configure_laser_module(
-        port="/dev/ttyAMA1", 
+        port="/dev/ttyAMA3", 
         baudrate=115200, 
         module_id=0,
         output_mode="active",
@@ -434,7 +434,7 @@ if __name__ == "__main__":
     time.sleep(1.0)
 
     # 启动主动模式监控器
-    monitor = LaserRangerMonitor(port="/dev/ttyAMA1", baudrate=115200, history_len=500)
+    monitor = LaserRangerMonitor(port="/dev/ttyAMA3", baudrate=115200, history_len=500)
     monitor.start()
 
     root = tk.Tk()

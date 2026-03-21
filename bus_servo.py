@@ -22,7 +22,7 @@ BusServoDriver = _driver.BusServoDriver
 
 
 class BusServo:
-    def __init__(self, port="/dev/ttyAMA0", baudrate=115200, servo_num=2, servo_ids=None, moving_time=50):
+    def __init__(self, port="/dev/ttyAMA1", baudrate=115200, servo_num=2, servo_ids=None, moving_time=50):
         self.servo_num = int(servo_num)
         self.servo_ids = list(servo_ids) if servo_ids is not None else [1, 2]
         self.moving_time = int(moving_time)
