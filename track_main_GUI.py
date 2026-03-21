@@ -1,4 +1,5 @@
 import time
+import os
 import threading
 import queue
 import tkinter as tk
@@ -64,14 +65,20 @@ class CircleTrackerGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Circle Tracker GUI")
+        cv2.setUseOptimized(True)
+        cpu_count = os.cpu_count() or 1
+        cv2.setNumThreads(max(1, cpu_count - 1))
         self.running = False
         self.tracking_active = False
         self.picam2 = None
         self.servo = None
         self.worker_thread = None
+        self.detect_thread = None
         self.stop_event = threading.Event()
+        self.detect_stop_event = threading.Event()
         self.frame_queue = queue.Queue(maxsize=1)
         self.settings_lock = threading.Lock()
+        self.detect_lock = threading.Lock()
         self.settings = {}
         self.worker_error = None
         self.last_exposure = None
@@ -117,6 +124,11 @@ class CircleTrackerGUI:
         self.x_bias = tk.IntVar(value=0)
         self.y_bias = tk.IntVar(value=0)
         self.status_text = tk.StringVar(value="Ready")
+        self.latest_frame = None
+        self.latest_frame_id = 0
+        self.latest_detection = None
+        self.latest_detection_time = 0.0
+        self.detect_stale_sec = 0.3
 
         self._build_ui()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -318,12 +330,15 @@ class CircleTrackerGUI:
             return
         try:
             self.stop_event.clear()
+            self.detect_stop_event.clear()
             self.worker_error = None
             self._update_settings_from_vars()
             self._ensure_camera()
             self.running = True
             self.worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
             self.worker_thread.start()
+            self.detect_thread = threading.Thread(target=self._detect_loop, daemon=True)
+            self.detect_thread.start()
             self.after_id = self.root.after(30, self._ui_loop)
             self.status_text.set("Detecting (tracking off)")
         except Exception as exc:
@@ -351,6 +366,9 @@ class CircleTrackerGUI:
         self.pid_x.reset()
         self.pid_y.reset()
         self.kalman = Kalman2D()
+        with self.detect_lock:
+            self.latest_detection = None
+            self.latest_detection_time = 0.0
         if self.servo is not None:
             self.servo.set_angles(
                 [
@@ -386,15 +404,13 @@ class CircleTrackerGUI:
                 frame_rgb = self.picam2.capture_array()
                 h, w = frame_rgb.shape[:2]
                 center_x, center_y = w // 2, h // 2
-                detection = self._detect_circle(
-                    frame_rgb,
-                    ksize=s["ksize"],
-                    min_dist=s["min_dist"],
-                    param1=s["param1"],
-                    param2=s["param2"],
-                    min_radius=s["min_radius"],
-                    max_radius=s["max_radius"],
-                )
+                with self.detect_lock:
+                    self.latest_frame = (frame_rgb, s)
+                    self.latest_frame_id += 1
+                    detection = self.latest_detection
+                    detection_age = time.time() - self.latest_detection_time if self.latest_detection_time > 0 else None
+                if detection_age is None or detection_age > self.detect_stale_sec:
+                    detection = None
 
                 measurement = None
                 radius = 0
@@ -499,6 +515,34 @@ class CircleTrackerGUI:
                 sleep_ms = max(0, effective_ms - elapsed_ms)
                 if sleep_ms > 0:
                     time.sleep(sleep_ms / 1000.0)
+        except Exception as exc:
+            self.worker_error = str(exc)
+            self.stop_event.set()
+
+    def _detect_loop(self):
+        last_processed_id = 0
+        try:
+            while not self.detect_stop_event.is_set():
+                with self.detect_lock:
+                    frame_bundle = self.latest_frame
+                    frame_id = self.latest_frame_id
+                if frame_bundle is None or frame_id == last_processed_id:
+                    time.sleep(0.002)
+                    continue
+                frame_rgb, s = frame_bundle
+                detection = self._detect_circle(
+                    frame_rgb,
+                    ksize=s["ksize"],
+                    min_dist=s["min_dist"],
+                    param1=s["param1"],
+                    param2=s["param2"],
+                    min_radius=s["min_radius"],
+                    max_radius=s["max_radius"],
+                )
+                with self.detect_lock:
+                    self.latest_detection = detection
+                    self.latest_detection_time = time.time()
+                    last_processed_id = frame_id
         except Exception as exc:
             self.worker_error = str(exc)
             self.stop_event.set()
@@ -629,6 +673,7 @@ class CircleTrackerGUI:
     def on_close(self):
         self.tracking_active = False
         self.stop_event.set()
+        self.detect_stop_event.set()
         if self.after_id is not None:
             try:
                 self.root.after_cancel(self.after_id)
@@ -638,6 +683,9 @@ class CircleTrackerGUI:
         if self.worker_thread is not None:
             self.worker_thread.join(timeout=2.0)
             self.worker_thread = None
+        if self.detect_thread is not None:
+            self.detect_thread.join(timeout=2.0)
+            self.detect_thread = None
         if self.picam2 is not None:
             try:
                 self.picam2.stop()
