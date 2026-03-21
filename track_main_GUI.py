@@ -514,7 +514,7 @@ class CircleTrackerGUI:
         r2 = 0
         r2 = self._grid_slider(common, r2, 0, "死区(像素)", self.error_deadband, 0.0, 30.0)
         ttk.Label(common, text="误差小于此值时不响应，避免抖动", font=("", 8), foreground="gray").grid(row=r2-1, column=2, sticky="w", padx=(6, 0))
-        r2 = self._grid_slider(common, r2, 0, "最大角速度(度/秒)", self.max_delta_deg_per_sec, 1.0, 300.0)
+        r2 = self._grid_slider(common, r2, 0, "最大角速度(度/秒)", self.max_delta_deg_per_sec, 1.0, 500.0)
         ttk.Label(common, text="限制舵机转动速度，10-60度/秒较平滑", font=("", 8), foreground="gray").grid(row=r2-1, column=2, sticky="w", padx=(6, 0))
 
         # 舵机范围配置
