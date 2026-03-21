@@ -1323,7 +1323,7 @@ class CircleTrackerGUI:
         r = int(round(chosen[2] / scale))
         return (x, y, r), blurred, offset_x, offset_y, scale
 
-    def _draw_overlay(self, frame, center, detection, target, pred, radius, error, dt, bounds=None):
+    def _draw_overlay(self, frame, center, detection, target, pred, radius, error, dt, bounds=None, laser_spot=None):
         # 确保所有坐标都是整数，避免 OpenCV 报 "can't parse center" 错误
         center = (int(round(center[0])), int(round(center[1])))
         target = (int(round(target[0])), int(round(target[1])))
@@ -1341,6 +1341,12 @@ class CircleTrackerGUI:
             cv2.circle(frame, (x, y), r, (0, 0, 255), 1)
             if radius > 0:
                 cv2.circle(frame, target, radius, (0, 255, 0), 1)
+                
+        if laser_spot is not None:
+            lx, ly = int(round(laser_spot[0])), int(round(laser_spot[1]))
+            # 在原图上也画一个黄色的十字星表示激光点
+            cv2.line(frame, (lx-10, ly), (lx+10, ly), (255, 255, 0), 2)
+            cv2.line(frame, (lx, ly-10), (lx, ly+10), (255, 255, 0), 2)
         error_x, error_y = error
         cv2.putText(frame, f"error_x={error_x:.2f}", (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
         cv2.putText(frame, f"error_y={error_y:.2f}", (10, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
