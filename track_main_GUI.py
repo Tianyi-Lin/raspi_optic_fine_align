@@ -1430,9 +1430,11 @@ class CircleTrackerGUI:
         self.current_pan_angle = 0.0
         self.current_tilt_angle = 0.0
         
-        # 阻塞式读取舵机硬件的物理边界并更新到GUI (带重试)
+        # 阻塞式读取舵机硬件的物理边界并更新到GUI (带重试，最多10次)
+        max_attempts = 10
+        
         print("[INFO] 正在读取水平舵机硬件边界...")
-        while True:
+        for attempt in range(1, max_attempts + 1):
             try:
                 pan_min, pan_max = self.servo.read_hardware_angle_limits(self.active_pan_id)
                 self.root.after(0, lambda: self.hw_pan_min.set(pan_min))
@@ -1440,11 +1442,14 @@ class CircleTrackerGUI:
                 print(f"[INFO] 水平舵机边界读取成功: {pan_min} ~ {pan_max}")
                 break
             except Exception as e:
-                print(f"[WARNING] 读取水平舵机边界失败: {e}。1秒后重试...")
-                time.sleep(1.0)
+                if attempt < max_attempts:
+                    print(f"[WARNING] 读取水平舵机边界失败 ({attempt}/{max_attempts}): {e}。1秒后重试...")
+                    time.sleep(1.0)
+                else:
+                    print(f"[ERROR] 连续 {max_attempts} 次读取水平舵机边界失败，放弃读取。将使用默认软限位。")
             
         print("[INFO] 正在读取俯仰舵机硬件边界...")
-        while True:
+        for attempt in range(1, max_attempts + 1):
             try:
                 tilt_min, tilt_max = self.servo.read_hardware_angle_limits(self.active_tilt_id)
                 self.root.after(0, lambda: self.hw_tilt_min.set(tilt_min))
@@ -1452,8 +1457,11 @@ class CircleTrackerGUI:
                 print(f"[INFO] 俯仰舵机边界读取成功: {tilt_min} ~ {tilt_max}")
                 break
             except Exception as e:
-                print(f"[WARNING] 读取俯仰舵机边界失败: {e}。1秒后重试...")
-                time.sleep(1.0)
+                if attempt < max_attempts:
+                    print(f"[WARNING] 读取俯仰舵机边界失败 ({attempt}/{max_attempts}): {e}。1秒后重试...")
+                    time.sleep(1.0)
+                else:
+                    print(f"[ERROR] 连续 {max_attempts} 次读取俯仰舵机边界失败，放弃读取。将使用默认软限位。")
 
     def _detect_circle(self, frame_rgb, *, ksize, min_dist, param1, param2, min_radius, max_radius, roi=None):
         offset_x = 0
