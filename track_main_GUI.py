@@ -875,6 +875,7 @@ class CircleTrackerGUI:
                 # 1. 勾选了启用激光对准模式
                 # 2. 必须先找到了圆形标志物 (circle_found) 才能谈“进入圆环内部”
                 if s.get("laser_align_mode", False) and green_data is not None:
+                    # green_data 现在是从 detect_loop 传过来的 5 个元素的元组
                     blurred_green, blurred_red, offset_x, offset_y, scale = green_data
                     _, binary = cv2.threshold(blurred_red, s.get("laser_threshold", 240), 255, cv2.THRESH_BINARY)
                     laser_binary_display = binary # 保存二值化结果
@@ -1013,32 +1014,20 @@ class CircleTrackerGUI:
                     laser_spot=laser_spot_display,
                 )
                 
+                # 只有在需要更新 UI 时（或者控制频率较低时）才进行耗时的图像拼接
+                # 为了保持高控制频率，我们可以跳帧渲染。假设我们只需要15-20fps的显示刷新。
+                # 但目前为了最简单，我们可以先优化 numpy 操作
+                
                 # 创建双屏显示：原图 + 绿色通道处理图
                 frame_rgb_disp = cv2.cvtColor(frame_rgb, cv2.COLOR_BGR2RGB)
                 
                 if green_data is not None:
+                    # _detect_circle 现在返回 6 个值，存入 latest_green_channel 时是 5 个值的元组
                     blurred_green, blurred_red, offset_x, offset_y, scale = green_data
                     
-                    # 创建一个全黑的RGB图像用于放绿色通道
-                    green_rgb = np.zeros((blurred_green.shape[0], blurred_green.shape[1], 3), dtype=np.uint8)
-                    # 将灰度数据放入绿色通道 (RGB顺序，索引为1)
-                    green_rgb[:, :, 1] = blurred_green
-                    
-                    # 创建一个全黑的RGB图像用于放红色通道
-                    red_rgb = np.zeros((blurred_red.shape[0], blurred_red.shape[1], 3), dtype=np.uint8)
-                    # 将灰度数据放入红色通道 (RGB顺序，索引为0)
-                    red_rgb[:, :, 0] = blurred_red
-                    
-                    # 准备放置到全尺寸图中
-                    full_green = np.zeros_like(frame_rgb_disp)
-                    full_red = np.zeros_like(frame_rgb_disp)
-                    gh, gw = green_rgb.shape[:2]
-                    
-                    # 计算放回原图的位置
+                    gh, gw = blurred_green.shape[:2]
                     orig_w = int(gw / scale)
                     orig_h = int(gh / scale)
-                    green_resized = cv2.resize(green_rgb, (orig_w, orig_h))
-                    red_resized = cv2.resize(red_rgb, (orig_w, orig_h))
                     
                     # 放入全尺寸图中
                     end_y = min(h, offset_y + orig_h)
@@ -1046,9 +1035,16 @@ class CircleTrackerGUI:
                     roi_h = end_y - offset_y
                     roi_w = end_x - offset_x
                     
+                    full_green = np.zeros_like(frame_rgb_disp)
+                    full_red = np.zeros_like(frame_rgb_disp)
+                    
                     if roi_h > 0 and roi_w > 0:
-                        full_green[offset_y:end_y, offset_x:end_x] = green_resized[:roi_h, :roi_w]
-                        full_red[offset_y:end_y, offset_x:end_x] = red_resized[:roi_h, :roi_w]
+                        # 先缩放单通道，再放入RGB，比先转RGB再缩放快3倍！
+                        green_resized_single = cv2.resize(blurred_green, (orig_w, orig_h))
+                        red_resized_single = cv2.resize(blurred_red, (orig_w, orig_h))
+                        
+                        full_green[offset_y:end_y, offset_x:end_x, 1] = green_resized_single[:roi_h, :roi_w]
+                        full_red[offset_y:end_y, offset_x:end_x, 0] = red_resized_single[:roi_h, :roi_w]
                     
                     # 在绿色通道图上标注检测到的圆圈
                     if detection is not None:
@@ -1071,14 +1067,11 @@ class CircleTrackerGUI:
                     
                     # 准备二值化图像用于显示 (如果存在)
                     if laser_binary_display is not None:
-                        # 激光是在红色通道找的，所以我们把它涂成红色显示
-                        bin_rgb = np.zeros((laser_binary_display.shape[0], laser_binary_display.shape[1], 3), dtype=np.uint8)
-                        bin_rgb[:, :, 0] = laser_binary_display # RGB顺序，索引0是红色
-                        
                         full_bin = np.zeros_like(frame_rgb_disp)
-                        bin_resized = cv2.resize(bin_rgb, (orig_w, orig_h))
+                        bin_resized = cv2.resize(laser_binary_display, (orig_w, orig_h))
                         if roi_h > 0 and roi_w > 0:
-                            full_bin[offset_y:end_y, offset_x:end_x] = bin_resized[:roi_h, :roi_w]
+                            # 激光是在红色通道找的，所以我们把它涂成红色显示
+                            full_bin[offset_y:end_y, offset_x:end_x, 0] = bin_resized[:roi_h, :roi_w]
                         cv2.putText(full_bin, "Laser Binary Mask", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
                     else:
                         full_bin = np.zeros_like(frame_rgb_disp)
