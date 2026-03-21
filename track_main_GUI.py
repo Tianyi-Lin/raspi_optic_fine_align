@@ -72,6 +72,7 @@ class CircleTrackerGUI:
         self.jog_step_deg = tk.DoubleVar(value=1.0)
 
         self.port = tk.StringVar(value="/dev/ttyAMA0")
+        self.baudrate = tk.IntVar(value=115200)
         self.pan_id = tk.IntVar(value=1)
         self.tilt_id = tk.IntVar(value=2)
         self.move_time_ms = tk.IntVar(value=50)
@@ -109,6 +110,7 @@ class CircleTrackerGUI:
         with self.settings_lock:
             self.settings = {
                 "port": self.port.get(),
+                "baudrate": int(self.baudrate.get()),
                 "pan_id": int(self.pan_id.get()),
                 "tilt_id": int(self.tilt_id.get()),
                 "move_time_ms": int(self.move_time_ms.get()),
@@ -172,6 +174,8 @@ class CircleTrackerGUI:
         r = 0
         self._grid_entry(tab_basic, r, 0, "串口", self.port, width=18)
         self._grid_entry(tab_basic, r, 2, "Move ms", self.move_time_ms, width=8)
+        r += 1
+        self._grid_entry(tab_basic, r, 0, "Baud", self.baudrate, width=10)
         r += 1
         self._grid_entry(tab_basic, r, 0, "Pan ID", self.pan_id, width=8)
         self._grid_entry(tab_basic, r, 2, "Tilt ID", self.tilt_id, width=8)
@@ -315,7 +319,7 @@ class CircleTrackerGUI:
             self.active_tilt_id = settings["tilt_id"]
             self.servo = BusServo(
                 port=settings["port"],
-                baudrate=9600,
+                baudrate=settings["baudrate"],
                 servo_num=2,
                 servo_ids=[self.active_pan_id, self.active_tilt_id],
                 moving_time=settings["move_time_ms"],
