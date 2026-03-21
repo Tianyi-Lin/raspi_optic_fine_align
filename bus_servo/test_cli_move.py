@@ -61,7 +61,23 @@ def validate_args(args):
 
 
 def read_pos_safe(driver: BusServoDriver, servo_id: int):
-    return driver.read_pos(servo_id)
+    # 增加重试机制，应对总线高负载或偶发丢包导致的超时
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            return driver.read_pos(servo_id)
+        except TimeoutError as e:
+            if attempt < max_retries - 1:
+                time.sleep(0.02) # 等待 20ms 后重试
+                continue
+            else:
+                print(f"[ERROR] 连续 {max_retries} 次读取超时")
+                raise e
+        except Exception as e:
+            if attempt < max_retries - 1:
+                time.sleep(0.02)
+                continue
+            raise e
 
 
 def main():
