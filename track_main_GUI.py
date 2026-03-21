@@ -547,11 +547,11 @@ class CircleTrackerGUI:
         servo_range.columnconfigure(0, weight=1)
         servo_range.columnconfigure(1, weight=1)
         r3 = 0
-        r3 = self._grid_slider(servo_range, r3, 0, "水平最小", self.pan_min, -90.0, 90.0)
-        r3 = self._grid_slider(servo_range, r3, 1, "水平最大", self.pan_max, -90.0, 90.0)
+        r3 = self._grid_slider(servo_range, r3, 0, "水平最小", self.pan_min, -90.0, 0.0)
+        r3 = self._grid_slider(servo_range, r3, 1, "水平最大", self.pan_max, 0.0, 90.0)
         r3 += 1
-        r3 = self._grid_slider(servo_range, r3, 0, "俯仰最小", self.tilt_min, -90.0, 90.0)
-        r3 = self._grid_slider(servo_range, r3, 1, "俯仰最大", self.tilt_max, -90.0, 90.0)
+        r3 = self._grid_slider(servo_range, r3, 0, "俯仰最小", self.tilt_min, -90.0, 0.0)
+        r3 = self._grid_slider(servo_range, r3, 1, "俯仰最大", self.tilt_max, 0.0, 90.0)
         
         # 硬件边界显示
         hw_range = ttk.LabelFrame(tab_pid, text="舵机物理边界 (硬件读取)", padding=8)
