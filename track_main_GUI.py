@@ -1031,7 +1031,8 @@ class CircleTrackerGUI:
                     (pred_x, pred_y),
                     laser_spot_display,
                     (pan_at_min, pan_at_max, tilt_at_min, tilt_at_max),
-                    s.get("laser_threshold", 240)
+                    s.get("laser_threshold", 240),
+                    deadband
                 )
                 try:
                     if self.frame_queue.full():
@@ -1139,7 +1140,8 @@ class CircleTrackerGUI:
                 (pred_x, pred_y),
                 laser_spot_display,
                 bounds,
-                laser_threshold
+                laser_threshold,
+                deadband
             ) = latest
             
             h, w = frame_rgb.shape[:2]
@@ -1207,15 +1209,19 @@ class CircleTrackerGUI:
                     
                     if laser_locked:
                         cv2.putText(full_bin, "Laser Binary Mask [LOCKED]", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                        # 同时在原图上也写上锁定状态
-                        cv2.putText(frame_rgb_disp, "Laser: LOCKED", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                        # 同时在原图的右下角也写上锁定状态
+                        cv2.putText(frame_rgb_disp, "Laser: LOCKED", (w - 250, h - 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
                     else:
                         cv2.putText(full_bin, "Laser Binary Mask [SEARCHING]", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 165, 0), 2)
-                        cv2.putText(frame_rgb_disp, "Laser: SEARCHING", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 165, 0), 2)
+                        cv2.putText(frame_rgb_disp, "Laser: SEARCHING", (w - 300, h - 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 165, 0), 2)
                 else:
                     full_bin = np.zeros_like(frame_rgb_disp)
                     cv2.putText(full_bin, "Laser Binary (Disabled)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (128, 128, 128), 2)
-                    cv2.putText(frame_rgb_disp, "Laser: BLIND ALIGN", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (128, 128, 128), 2)
+                    cv2.putText(frame_rgb_disp, "Laser: BLIND ALIGN", (w - 320, h - 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (128, 128, 128), 2)
+                
+                # 检查是否进入死区 (对准完成)
+                if abs(error_x) <= deadband and abs(error_y) <= deadband and circle_found:
+                    cv2.putText(frame_rgb_disp, "ALIGNMENT COMPLETE (IN DEADBAND)", (10, h - 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
                 
                 top_row = np.hstack((frame_rgb_disp, full_green))
                 bottom_row = np.hstack((full_red, full_bin))
