@@ -11,6 +11,7 @@ import matplotlib
 matplotlib.use("TkAgg")
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
+from laser_ranger_setting import configure_laser_module
 
 
 class LaserRangerMonitor:
@@ -418,6 +419,21 @@ class MonitorGUI:
 
 
 if __name__ == "__main__":
+    # 测试脚本启动时，先强制将模块配置为 active 主动输出模式
+    print("[INFO] 正在强制配置激光模块为主动输出模式 (Active)...")
+    configure_laser_module(
+        port="/dev/ttyAMA1", 
+        baudrate=115200, 
+        module_id=0,
+        output_mode="active",
+        range_mode="medium",
+        interface_mode="uart",
+        uart_baudrate=115200
+    )
+    print("[INFO] 激光配置完成，等待1秒以释放串口...")
+    time.sleep(1.0)
+
+    # 启动主动模式监控器
     monitor = LaserRangerMonitor(port="/dev/ttyAMA1", baudrate=115200, history_len=500)
     monitor.start()
 
