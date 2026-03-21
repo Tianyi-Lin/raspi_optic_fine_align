@@ -439,11 +439,11 @@ class CircleTrackerGUI:
         servo_range.columnconfigure(0, weight=1)
         servo_range.columnconfigure(1, weight=1)
         r3 = 0
-        r3 = self._grid_slider(servo_range, r3, 0, "水平最小", self.pan_min, -90.0, 0.0)
-        r3 = self._grid_slider(servo_range, r3, 1, "水平最大", self.pan_max, 0.0, 90.0)
+        r3 = self._grid_slider(servo_range, r3, 0, "水平最小", self.pan_min, -90.0, 90.0)
+        r3 = self._grid_slider(servo_range, r3, 1, "水平最大", self.pan_max, -90.0, 90.0)
         r3 += 1
-        r3 = self._grid_slider(servo_range, r3, 0, "俯仰最小", self.tilt_min, -90.0, 0.0)
-        r3 = self._grid_slider(servo_range, r3, 1, "俯仰最大", self.tilt_max, 0.0, 90.0)
+        r3 = self._grid_slider(servo_range, r3, 0, "俯仰最小", self.tilt_min, -90.0, 90.0)
+        r3 = self._grid_slider(servo_range, r3, 1, "俯仰最大", self.tilt_max, -90.0, 90.0)
 
         tab_vision.columnconfigure(0, weight=1)
         tab_vision.columnconfigure(1, weight=1)
@@ -502,6 +502,32 @@ class CircleTrackerGUI:
                 value_text.set(f"{var.get():.4f}")
 
         var.trace_add("write", _on_change)
+
+        # 添加键盘方向键支持
+        step = (high - low) / 100.0  # 每次按键移动1%
+        if isinstance(var, tk.IntVar):
+            step = max(1, int(step))
+
+        def _on_key(event):
+            current = var.get()
+            if event.keysym == "Left":
+                new_val = max(low, current - step)
+            elif event.keysym == "Right":
+                new_val = min(high, current + step)
+            elif event.keysym == "Home":
+                new_val = low
+            elif event.keysym == "End":
+                new_val = high
+            else:
+                return
+            var.set(new_val)
+
+        scale.bind("<Left>", _on_key)
+        scale.bind("<Right>", _on_key)
+        scale.bind("<Home>", _on_key)
+        scale.bind("<End>", _on_key)
+        scale.bind("<FocusIn>", lambda e: scale.focus_set())
+
         return row + 1
 
     def _start_runtime(self):
@@ -630,8 +656,9 @@ class CircleTrackerGUI:
                 max_step = float(s["max_delta_deg_per_sec"]) * dt
 
                 do_track = self.tracking_active
-                if do_track and self.servo is None:
+                if do_track:
                     try:
+                        # 每次循环都同步角度范围到舵机驱动层（确保GUI修改立即生效）
                         self._ensure_servo()
                     except Exception as exc:
                         self.worker_error = str(exc)
