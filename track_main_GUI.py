@@ -655,8 +655,11 @@ class CircleTrackerGUI:
         rv = self._grid_slider(left_vis, rv, 0, "最大半径", self.max_radius, 1, 300)
         rv2 = 0
         rv2 = self._grid_slider(right_vis, rv2, 0, "模糊核大小", self.ksize, 3, 19)
+        
+        # 视差校正偏置 (盲对准模式下使用)
         rv2 = self._grid_slider(right_vis, rv2, 0, "X偏置", self.x_bias, -200, 200)
         rv2 = self._grid_slider(right_vis, rv2, 0, "Y偏置", self.y_bias, -200, 200)
+        ttk.Label(right_vis, text="用于校正激光器与相机光轴的物理视差(仅盲对准时生效)", font=("", 8), foreground="gray", wraplength=180).grid(row=rv2-1, column=0, columnspan=2, sticky="w", pady=(0, 5))
         
         # 激光指示对准配置
         ttk.Separator(right_vis, orient=tk.HORIZONTAL).grid(row=rv2, column=0, columnspan=2, sticky="ew", pady=10)
@@ -840,8 +843,10 @@ class CircleTrackerGUI:
                     pred_x, pred_y = float(center_x), float(center_y)
                 else:
                     filtered_x, filtered_y, pred_x, pred_y = kalman_out
-                target_x = filtered_x + float(s["x_bias"])
-                target_y = filtered_y + float(s["y_bias"])
+                    
+                # 目标圆心坐标（这里暂不加 bias，后面根据对准模式决定）
+                target_x = filtered_x
+                target_y = filtered_y
 
                 if not s["track_enabled"]:
                     target_x = float(center_x)
@@ -853,11 +858,11 @@ class CircleTrackerGUI:
                 self.kalman.update_params(s["kalman_process_noise"], s["kalman_measurement_noise"])
 
                 # 处理激光对准逻辑
-                # 盲对准 (False): 将相机中心 (center_x, center_y) 对准圆心 target_x
-                # 指示对准 (True): 将激光光斑 (laser_spot) 对准圆心 target_x
                 laser_spot_display = None
                 if s.get("laser_align_mode", False) and green_data is not None:
-                    # 寻找激光光斑
+                    # 【指示对准模式】
+                    # 在此模式下，直接寻找光斑，并将光斑的中心作为实际位置。
+                    # 此时不需要使用 x_bias/y_bias，因为反馈闭环已经是"真实光斑" vs "真实圆心"了。
                     blurred_green, _, _, scale = green_data
                     _, binary = cv2.threshold(blurred_green, s.get("laser_threshold", 240), 255, cv2.THRESH_BINARY)
                     num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary, connectivity=8)
@@ -872,7 +877,7 @@ class CircleTrackerGUI:
                         laser_y = cy / scale
                         laser_spot_display = (laser_x, laser_y)
                         
-                        # 在指示对准模式下，误差 = 激光点坐标 - 圆心坐标
+                        # 误差 = 激光点坐标 - 圆心坐标
                         error_x = laser_x - target_x
                         error_y = laser_y - target_y
                     else:
@@ -880,7 +885,14 @@ class CircleTrackerGUI:
                         error_x = 0.0
                         error_y = 0.0
                 else:
-                    # 默认盲对准：相机中心对准目标圆心
+                    # 【盲对准模式】
+                    # 在此模式下，不知道激光点到底打在哪。
+                    # 我们需要将目标圆心 (target_x, target_y) 加上一个手动测量的补偿值 (x_bias, y_bias)，
+                    # 这个补偿值代表了【相机中心光轴】与【激光器光轴】之间的物理安装视差。
+                    # 然后让相机中心去对准这个加了偏置的虚拟圆心。
+                    target_x += float(s["x_bias"])
+                    target_y += float(s["y_bias"])
+                    
                     error_x = float(center_x) - target_x
                     error_y = float(center_y) - target_y
 
