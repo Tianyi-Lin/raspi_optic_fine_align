@@ -548,21 +548,27 @@ class CircleTrackerGUI:
         hw_range.pack(fill=tk.X, pady=(10, 0))
         hw_range.columnconfigure(0, weight=1)
         hw_range.columnconfigure(1, weight=1)
-        ttk.Label(hw_range, text="水平最小:").grid(row=0, column=0, sticky="e")
-        ttk.Label(hw_range, textvariable=tk.StringVar(value=""), name="lbl_hw_pan_min").grid(row=0, column=1, sticky="w", padx=5)
-        ttk.Label(hw_range, text="水平最大:").grid(row=0, column=2, sticky="e")
-        ttk.Label(hw_range, textvariable=tk.StringVar(value=""), name="lbl_hw_pan_max").grid(row=0, column=3, sticky="w", padx=5)
-        ttk.Label(hw_range, text="俯仰最小:").grid(row=1, column=0, sticky="e")
-        ttk.Label(hw_range, textvariable=tk.StringVar(value=""), name="lbl_hw_tilt_min").grid(row=1, column=1, sticky="w", padx=5)
-        ttk.Label(hw_range, text="俯仰最大:").grid(row=1, column=2, sticky="e")
-        ttk.Label(hw_range, textvariable=tk.StringVar(value=""), name="lbl_hw_tilt_max").grid(row=1, column=3, sticky="w", padx=5)
         
-        # 绑定变量到Label，以便动态更新
+        self.str_hw_pan_min = tk.StringVar(value="-90.0°")
+        self.str_hw_pan_max = tk.StringVar(value="90.0°")
+        self.str_hw_tilt_min = tk.StringVar(value="-90.0°")
+        self.str_hw_tilt_max = tk.StringVar(value="90.0°")
+
+        ttk.Label(hw_range, text="水平最小:").grid(row=0, column=0, sticky="e")
+        ttk.Label(hw_range, textvariable=self.str_hw_pan_min).grid(row=0, column=1, sticky="w", padx=5)
+        ttk.Label(hw_range, text="水平最大:").grid(row=0, column=2, sticky="e")
+        ttk.Label(hw_range, textvariable=self.str_hw_pan_max).grid(row=0, column=3, sticky="w", padx=5)
+        ttk.Label(hw_range, text="俯仰最小:").grid(row=1, column=0, sticky="e")
+        ttk.Label(hw_range, textvariable=self.str_hw_tilt_min).grid(row=1, column=1, sticky="w", padx=5)
+        ttk.Label(hw_range, text="俯仰最大:").grid(row=1, column=2, sticky="e")
+        ttk.Label(hw_range, textvariable=self.str_hw_tilt_max).grid(row=1, column=3, sticky="w", padx=5)
+        
+        # 绑定变量，以便动态更新字符串
         def update_hw_labels(*args):
-            hw_range.nametowidget("lbl_hw_pan_min").config(text=f"{self.hw_pan_min.get():.1f}°")
-            hw_range.nametowidget("lbl_hw_pan_max").config(text=f"{self.hw_pan_max.get():.1f}°")
-            hw_range.nametowidget("lbl_hw_tilt_min").config(text=f"{self.hw_tilt_min.get():.1f}°")
-            hw_range.nametowidget("lbl_hw_tilt_max").config(text=f"{self.hw_tilt_max.get():.1f}°")
+            self.str_hw_pan_min.set(f"{self.hw_pan_min.get():.1f}°")
+            self.str_hw_pan_max.set(f"{self.hw_pan_max.get():.1f}°")
+            self.str_hw_tilt_min.set(f"{self.hw_tilt_min.get():.1f}°")
+            self.str_hw_tilt_max.set(f"{self.hw_tilt_max.get():.1f}°")
         
         self.hw_pan_min.trace_add("write", update_hw_labels)
         self.hw_pan_max.trace_add("write", update_hw_labels)
