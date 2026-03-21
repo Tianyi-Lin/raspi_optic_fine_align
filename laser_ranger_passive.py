@@ -20,7 +20,7 @@ class LaserRangerQueryMonitor:
     - 接收并解析返回的 Frame0 数据
     """
 
-    def __init__(self, port="/dev/ttyAMA2", baudrate=115200, module_id=0, query_interval=0.1, history_len=500):
+    def __init__(self, port="/dev/ttyAMA1", baudrate=115200, module_id=0, query_interval=0.1, history_len=500):
         self.port = port
         self.baudrate = baudrate
         self.module_id = module_id
@@ -505,7 +505,7 @@ class MonitorGUI:
 
 if __name__ == "__main__":
     monitor = LaserRangerQueryMonitor(
-        port="/dev/ttyAMA2",
+        port="/dev/ttyAMA1",
         baudrate=115200,
         module_id=0,
         query_interval=0.1,   # 100ms 查询一次

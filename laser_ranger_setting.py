@@ -220,7 +220,7 @@ def configure_laser_module(
 
 def main():
     parser = argparse.ArgumentParser(description="TOF Laser Ranger 配置脚本（UART 0x54 0x20）")
-    parser.add_argument("--port", default="/dev/ttyAMA2")
+    parser.add_argument("--port", default="/dev/ttyAMA1")
     parser.add_argument("--baudrate", type=int, default=115200, help="当前串口波特率")
     parser.add_argument("--id", type=int, default=0, help="模块ID")
 
