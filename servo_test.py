@@ -32,7 +32,7 @@ def run_test(motor, positions, hold_sec, cycles, read_reply):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--port", default="/dev/serial0")
+    parser.add_argument("--port", default="/dev/ttyAMA0")
     parser.add_argument("--motor-id", type=int, default=1)
     parser.add_argument("--max-speed", type=int, default=3000)
     parser.add_argument("--start", type=float, default=-10.0)
