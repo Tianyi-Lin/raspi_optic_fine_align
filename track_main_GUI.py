@@ -115,7 +115,7 @@ class CircleTrackerGUI:
         self.max_delta_deg_per_sec = tk.DoubleVar(value=30.0)
         self.exposure_value = tk.DoubleVar(value=0.0)
         self.analogue_gain = tk.DoubleVar(value=8.0)
-        self.ae_enable = tk.BooleanVar(value=True)
+        self.ae_enable = tk.BooleanVar(value=False)
         self.ksize = tk.IntVar(value=5)
         self.min_dist = tk.IntVar(value=80)
         self.param1 = tk.IntVar(value=220)
@@ -298,45 +298,46 @@ class CircleTrackerGUI:
 
     def _save_settings(self):
         path = self._settings_path()
-        data = {
-            "port": self.port.get(),
-            "baudrate": int(self.baudrate.get()),
-            "pan_id": int(self.pan_id.get()),
-            "tilt_id": int(self.tilt_id.get()),
-            "move_time_ms": int(self.move_time_ms.get()),
-            "control_period_ms": int(self.control_period_ms.get()),
-            "track_enabled": bool(self.track_enabled.get()),
-            "pan_enabled": bool(self.pan_enabled.get()),
-            "tilt_enabled": bool(self.tilt_enabled.get()),
-            "kp_x": float(self.kp_x.get()),
-            "ki_x": float(self.ki_x.get()),
-            "kd_x": float(self.kd_x.get()),
-            "kp_y": float(self.kp_y.get()),
-            "ki_y": float(self.ki_y.get()),
-            "kd_y": float(self.kd_y.get()),
-            "deadband": float(self.error_deadband.get()),
-            "max_delta_deg_per_sec": float(self.max_delta_deg_per_sec.get()),
-            "exposure": float(self.exposure_value.get()),
-            "gain": float(self.analogue_gain.get()),
-            "ae_enable": bool(self.ae_enable.get()),
-            "ksize": int(self.ksize.get()),
-            "min_dist": int(self.min_dist.get()),
-            "param1": int(self.param1.get()),
-            "param2": int(self.param2.get()),
-            "min_radius": int(self.min_radius.get()),
-            "max_radius": int(self.max_radius.get()),
-            "x_bias": int(self.x_bias.get()),
-            "y_bias": int(self.y_bias.get()),
-            "pan_min": float(self.pan_min.get()),
-            "pan_max": float(self.pan_max.get()),
-            "tilt_min": float(self.tilt_min.get()),
-            "tilt_max": float(self.tilt_max.get()),
-        }
         try:
+            data = {
+                "port": self.port.get(),
+                "baudrate": int(self.baudrate.get()),
+                "pan_id": int(self.pan_id.get()),
+                "tilt_id": int(self.tilt_id.get()),
+                "move_time_ms": int(self.move_time_ms.get()),
+                "control_period_ms": int(self.control_period_ms.get()),
+                "track_enabled": bool(self.track_enabled.get()),
+                "pan_enabled": bool(self.pan_enabled.get()),
+                "tilt_enabled": bool(self.tilt_enabled.get()),
+                "kp_x": float(self.kp_x.get()),
+                "ki_x": float(self.ki_x.get()),
+                "kd_x": float(self.kd_x.get()),
+                "kp_y": float(self.kp_y.get()),
+                "ki_y": float(self.ki_y.get()),
+                "kd_y": float(self.kd_y.get()),
+                "deadband": float(self.error_deadband.get()),
+                "max_delta_deg_per_sec": float(self.max_delta_deg_per_sec.get()),
+                "exposure": float(self.exposure_value.get()),
+                "gain": float(self.analogue_gain.get()),
+                "ae_enable": bool(self.ae_enable.get()),
+                "ksize": int(self.ksize.get()),
+                "min_dist": int(self.min_dist.get()),
+                "param1": int(self.param1.get()),
+                "param2": int(self.param2.get()),
+                "min_radius": int(self.min_radius.get()),
+                "max_radius": int(self.max_radius.get()),
+                "x_bias": int(self.x_bias.get()),
+                "y_bias": int(self.y_bias.get()),
+                "pan_min": float(self.pan_min.get()),
+                "pan_max": float(self.pan_max.get()),
+                "tilt_min": float(self.tilt_min.get()),
+                "tilt_max": float(self.tilt_max.get()),
+            }
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
+            print(f"[INFO] 设置已保存到: {path}")
+        except Exception as e:
+            print(f"[ERROR] 保存设置失败: {e}")
 
     def _build_ui(self):
         main = ttk.Frame(self.root, padding=8)
@@ -773,10 +774,26 @@ class CircleTrackerGUI:
         self.after_id = self.root.after(30, self._ui_loop)
 
     def _sync_camera_controls(self, ae_enable, exposure, gain):
-        if self.last_ae_enable == ae_enable and self.last_exposure == exposure and self.last_gain == gain:
+        # 检查是否有变化
+        ae_changed = self.last_ae_enable != ae_enable
+        exposure_changed = self.last_exposure != exposure
+        gain_changed = self.last_gain != gain
+        
+        if not ae_changed and not exposure_changed and not gain_changed:
             return
-        self.picam2.set_controls({"AeEnable": bool(ae_enable), "AwbEnable": True})
-        self.picam2.set_controls({"ExposureValue": float(exposure), "AnalogueGain": float(gain)})
+        
+        # 自动曝光开关变化时，先设置AeEnable
+        if ae_changed:
+            self.picam2.set_controls({"AeEnable": bool(ae_enable)})
+        
+        # 自动曝光关闭时，才手动设置曝光值和增益
+        if not ae_enable:
+            if exposure_changed or gain_changed or ae_changed:
+                self.picam2.set_controls({
+                    "ExposureValue": float(exposure), 
+                    "AnalogueGain": float(gain)
+                })
+        
         self.last_ae_enable = ae_enable
         self.last_exposure = exposure
         self.last_gain = gain
