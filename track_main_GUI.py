@@ -1423,14 +1423,19 @@ class CircleTrackerGUI:
         self.current_tilt_angle = 0.0
         
         # 读取舵机硬件的物理边界并更新到GUI
-        pan_min, pan_max = self.servo.read_hardware_angle_limits(self.active_pan_id)
-        tilt_min, tilt_max = self.servo.read_hardware_angle_limits(self.active_tilt_id)
-        
-        # 使用after以确保在主线程更新GUI
-        self.root.after(0, lambda: self.hw_pan_min.set(pan_min))
-        self.root.after(0, lambda: self.hw_pan_max.set(pan_max))
-        self.root.after(0, lambda: self.hw_tilt_min.set(tilt_min))
-        self.root.after(0, lambda: self.hw_tilt_max.set(tilt_max))
+        try:
+            pan_min, pan_max = self.servo.read_hardware_angle_limits(self.active_pan_id)
+            self.root.after(0, lambda: self.hw_pan_min.set(pan_min))
+            self.root.after(0, lambda: self.hw_pan_max.set(pan_max))
+        except Exception as e:
+            print(f"[WARNING] 无法读取水平舵机({self.active_pan_id})的硬件边界: {e}")
+            
+        try:
+            tilt_min, tilt_max = self.servo.read_hardware_angle_limits(self.active_tilt_id)
+            self.root.after(0, lambda: self.hw_tilt_min.set(tilt_min))
+            self.root.after(0, lambda: self.hw_tilt_max.set(tilt_max))
+        except Exception as e:
+            print(f"[WARNING] 无法读取俯仰舵机({self.active_tilt_id})的硬件边界: {e}")
 
     def _detect_circle(self, frame_rgb, *, ksize, min_dist, param1, param2, min_radius, max_radius, roi=None):
         offset_x = 0
