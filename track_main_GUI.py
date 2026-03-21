@@ -100,8 +100,8 @@ class CircleTrackerGUI:
         self.baudrate = tk.IntVar(value=115200)
         self.pan_id = tk.IntVar(value=1)
         self.tilt_id = tk.IntVar(value=2)
-        self.move_time_ms = tk.IntVar(value=16)
-        self.control_period_ms = tk.IntVar(value=16)
+        self.move_time_ms = tk.IntVar(value=40)
+        self.control_period_ms = tk.IntVar(value=50)
         self.track_enabled = tk.BooleanVar(value=True)
         self.pan_enabled = tk.BooleanVar(value=True)
         self.tilt_enabled = tk.BooleanVar(value=True)
@@ -149,8 +149,8 @@ class CircleTrackerGUI:
             "baudrate": 115200,
             "pan_id": 1,
             "tilt_id": 2,
-            "move_time_ms": 16,
-            "control_period_ms": 16,
+            "move_time_ms": 40,
+            "control_period_ms": 50,
             "kp_x": 0.0075,
             "ki_x": 0.025,
             "kd_x": 0.000005,
