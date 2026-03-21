@@ -657,17 +657,22 @@ class CircleTrackerGUI:
         rv2 = self._grid_slider(right_vis, rv2, 0, "模糊核大小", self.ksize, 3, 19)
         
         # 视差校正偏置
+        ttk.Separator(right_vis, orient=tk.HORIZONTAL).grid(row=rv2, column=0, columnspan=2, sticky="ew", pady=(5, 5))
+        rv2 += 1
         rv2 = self._grid_slider(right_vis, rv2, 0, "X偏置", self.x_bias, -200, 200)
         rv2 = self._grid_slider(right_vis, rv2, 0, "Y偏置", self.y_bias, -200, 200)
-        ttk.Label(right_vis, text="校正激光器与相机的物理视差。指示模式下发现光斑后自动失效", font=("", 8), foreground="gray", wraplength=180).grid(row=rv2-1, column=0, columnspan=2, sticky="w", pady=(0, 5))
+        ttk.Label(right_vis, text="校正激光与相机的物理视差。\n(指示模式下发现光斑后自动失效)", font=("", 8), foreground="gray").grid(row=rv2, column=0, columnspan=2, sticky="w", pady=(0, 5))
+        rv2 += 1
         
         # 激光指示对准配置
-        ttk.Separator(right_vis, orient=tk.HORIZONTAL).grid(row=rv2, column=0, columnspan=2, sticky="ew", pady=10)
+        ttk.Separator(right_vis, orient=tk.HORIZONTAL).grid(row=rv2, column=0, columnspan=2, sticky="ew", pady=(5, 5))
         rv2 += 1
-        ttk.Checkbutton(right_vis, text="启用激光指示对准 (找最亮光斑)", variable=self.laser_align_mode).grid(row=rv2, column=0, columnspan=2, sticky="w", pady=(0, 5))
+        ttk.Checkbutton(right_vis, text="启用激光指示对准", variable=self.laser_align_mode).grid(row=rv2, column=0, columnspan=2, sticky="w", pady=(5, 0))
+        rv2 += 1
+        ttk.Label(right_vis, text="(在ROI内寻找最亮光斑)", font=("", 8), foreground="gray").grid(row=rv2, column=0, columnspan=2, sticky="w", pady=(0, 5))
         rv2 += 1
         rv2 = self._grid_slider(right_vis, rv2, 0, "光斑二值化阈值", self.laser_threshold, 100, 255)
-        ttk.Label(right_vis, text="大于该亮度的像素将被视为光斑", font=("", 8), foreground="gray", wraplength=180).grid(row=rv2-1, column=0, columnspan=2, sticky="w")
+        ttk.Label(right_vis, text="大于该亮度的像素将被视为光斑", font=("", 8), foreground="gray").grid(row=rv2, column=0, columnspan=2, sticky="w", pady=(0, 5))
 
         tab_camera.columnconfigure(0, weight=1)
         cam = ttk.Frame(tab_camera)
