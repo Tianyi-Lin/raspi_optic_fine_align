@@ -117,9 +117,9 @@ class CircleTrackerGUI:
         self.kd_y = tk.DoubleVar(value=0.000005)
         self.error_deadband = tk.DoubleVar(value=3.0)
         self.max_delta_deg_per_sec = tk.DoubleVar(value=30.0)
-        self.exposure_value = tk.DoubleVar(value=0.0)
-        self.analogue_gain = tk.DoubleVar(value=8.0)
-        self.ae_enable = tk.BooleanVar(value=False)
+        self.exposure_value = tk.IntVar(value=10000) # 微秒 us
+        self.analogue_gain = tk.DoubleVar(value=1.0)
+        self.ae_enable = tk.BooleanVar(value=True)
         self.ksize = tk.IntVar(value=5)
         self.min_dist = tk.IntVar(value=80)
         self.param1 = tk.IntVar(value=220)
@@ -285,9 +285,9 @@ class CircleTrackerGUI:
             "kd_y": 0.000005,
             "deadband": 3.0,
             "max_delta_deg_per_sec": 30.0,
-            "exposure": 0.0,
-            "gain": 8.0,
-            "ae_enable": False,
+            "exposure": 10000,
+            "gain": 1.0,
+            "ae_enable": True,
             "ksize": 5,
             "min_dist": 80,
             "param1": 220,
@@ -338,7 +338,7 @@ class CircleTrackerGUI:
             "kd_y": safe_float(self.kd_y, "kd_y"),
             "deadband": safe_float(self.error_deadband, "deadband"),
             "max_delta_deg_per_sec": safe_float(self.max_delta_deg_per_sec, "max_delta_deg_per_sec"),
-            "exposure": safe_float(self.exposure_value, "exposure"),
+            "exposure": safe_int(self.exposure_value, "exposure"),
             "gain": safe_float(self.analogue_gain, "gain"),
             "ae_enable": safe_bool(self.ae_enable, "ae_enable"),
             "ksize": safe_int(self.ksize, "ksize"),
@@ -652,7 +652,7 @@ class CircleTrackerGUI:
         rc = self._grid_slider(cam, rc, 0, "相机FPS", self.camera_fps, 10, 120)
         ttk.Checkbutton(cam, text="自动曝光", variable=self.ae_enable).grid(row=rc, column=0, sticky="w", pady=(2, 8))
         rc += 1
-        rc = self._grid_slider(cam, rc, 0, "曝光", self.exposure_value, -8.0, 8.0)
+        rc = self._grid_slider(cam, rc, 0, "曝光(us)", self.exposure_value, 100, 100000)
         rc = self._grid_slider(cam, rc, 0, "增益", self.analogue_gain, 1.0, 22.0)
 
     def _grid_entry(self, parent, row, col, text, var, width=10):
@@ -1100,18 +1100,26 @@ class CircleTrackerGUI:
             
         controls_to_set = {}
         
-        # 处理帧率修改
-        if fps_changed and target_fps > 0:
-            frame_duration = int(1000000 / target_fps)
-            controls_to_set["FrameDurationLimits"] = (frame_duration, frame_duration)
-            self.last_fps = target_fps
+        # 处理帧率修改，并保证“曝光优先于FPS”
+        # 如果是手动曝光模式，且设置的曝光时间大于目标FPS的单帧时间，则必须放宽FrameDurationLimits
+        if target_fps > 0:
+            frame_duration_us = int(1000000 / target_fps)
+            if not ae_enable and exposure > frame_duration_us:
+                # 曝光时间超出了当前FPS的物理极限，延长帧间距以满足曝光
+                actual_duration = int(exposure)
+            else:
+                actual_duration = frame_duration_us
+                
+            if fps_changed or (not ae_enable and exposure_changed):
+                controls_to_set["FrameDurationLimits"] = (actual_duration, actual_duration)
+                self.last_fps = target_fps
         
         # 自动曝光关闭时，同时设置AeEnable和曝光参数
         if not ae_enable:
             if ae_changed:
                 controls_to_set["AeEnable"] = False
             if exposure_changed or ae_changed:
-                controls_to_set["ExposureValue"] = float(exposure)
+                controls_to_set["ExposureTime"] = int(exposure)
             if gain_changed or ae_changed:
                 controls_to_set["AnalogueGain"] = float(gain)
         else:
