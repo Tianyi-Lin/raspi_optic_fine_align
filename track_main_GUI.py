@@ -104,7 +104,7 @@ class CircleTrackerGUI:
         self.active_tilt_id = 2
         self.jog_step_deg = tk.DoubleVar(value=1.0)
 
-        self.port = tk.StringVar(value="/dev/ttyAMA0")
+        self.port = tk.StringVar(value="/dev/ttyUSB0")
         self.baudrate = tk.IntVar(value=115200)
         self.pan_id = tk.IntVar(value=1)
         self.tilt_id = tk.IntVar(value=2)
