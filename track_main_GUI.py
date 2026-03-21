@@ -1430,20 +1430,30 @@ class CircleTrackerGUI:
         self.current_pan_angle = 0.0
         self.current_tilt_angle = 0.0
         
-        # 读取舵机硬件的物理边界并更新到GUI
-        try:
-            pan_min, pan_max = self.servo.read_hardware_angle_limits(self.active_pan_id)
-            self.root.after(0, lambda: self.hw_pan_min.set(pan_min))
-            self.root.after(0, lambda: self.hw_pan_max.set(pan_max))
-        except Exception as e:
-            print(f"[WARNING] 无法读取水平舵机({self.active_pan_id})的硬件边界: {e}")
+        # 阻塞式读取舵机硬件的物理边界并更新到GUI (带重试)
+        print("[INFO] 正在读取水平舵机硬件边界...")
+        while True:
+            try:
+                pan_min, pan_max = self.servo.read_hardware_angle_limits(self.active_pan_id)
+                self.root.after(0, lambda: self.hw_pan_min.set(pan_min))
+                self.root.after(0, lambda: self.hw_pan_max.set(pan_max))
+                print(f"[INFO] 水平舵机边界读取成功: {pan_min} ~ {pan_max}")
+                break
+            except Exception as e:
+                print(f"[WARNING] 读取水平舵机边界失败: {e}。1秒后重试...")
+                time.sleep(1.0)
             
-        try:
-            tilt_min, tilt_max = self.servo.read_hardware_angle_limits(self.active_tilt_id)
-            self.root.after(0, lambda: self.hw_tilt_min.set(tilt_min))
-            self.root.after(0, lambda: self.hw_tilt_max.set(tilt_max))
-        except Exception as e:
-            print(f"[WARNING] 无法读取俯仰舵机({self.active_tilt_id})的硬件边界: {e}")
+        print("[INFO] 正在读取俯仰舵机硬件边界...")
+        while True:
+            try:
+                tilt_min, tilt_max = self.servo.read_hardware_angle_limits(self.active_tilt_id)
+                self.root.after(0, lambda: self.hw_tilt_min.set(tilt_min))
+                self.root.after(0, lambda: self.hw_tilt_max.set(tilt_max))
+                print(f"[INFO] 俯仰舵机边界读取成功: {tilt_min} ~ {tilt_max}")
+                break
+            except Exception as e:
+                print(f"[WARNING] 读取俯仰舵机边界失败: {e}。1秒后重试...")
+                time.sleep(1.0)
 
     def _detect_circle(self, frame_rgb, *, ksize, min_dist, param1, param2, min_radius, max_radius, roi=None):
         offset_x = 0
