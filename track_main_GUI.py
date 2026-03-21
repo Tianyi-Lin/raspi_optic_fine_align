@@ -100,8 +100,8 @@ class CircleTrackerGUI:
         self.baudrate = tk.IntVar(value=115200)
         self.pan_id = tk.IntVar(value=1)
         self.tilt_id = tk.IntVar(value=2)
-        self.move_time_ms = tk.IntVar(value=50)
-        self.control_period_ms = tk.IntVar(value=50)
+        self.move_time_ms = tk.IntVar(value=16)
+        self.control_period_ms = tk.IntVar(value=16)
         self.track_enabled = tk.BooleanVar(value=True)
         self.pan_enabled = tk.BooleanVar(value=True)
         self.tilt_enabled = tk.BooleanVar(value=True)
@@ -140,36 +140,81 @@ class CircleTrackerGUI:
         self.root.after(10, self._start_runtime)
 
     def _update_settings_from_vars(self):
+        fallback = {
+            "baudrate": 115200,
+            "pan_id": 1,
+            "tilt_id": 2,
+            "move_time_ms": 16,
+            "control_period_ms": 16,
+            "kp_x": 0.0075,
+            "ki_x": 0.025,
+            "kd_x": 0.000005,
+            "kp_y": 0.01,
+            "ki_y": 0.02,
+            "kd_y": 0.000005,
+            "deadband": 3.0,
+            "max_delta_deg_per_sec": 30.0,
+            "exposure": 0.0,
+            "gain": 8.0,
+            "ksize": 5,
+            "min_dist": 80,
+            "param1": 220,
+            "param2": 35,
+            "min_radius": 20,
+            "max_radius": 120,
+            "x_bias": 0,
+            "y_bias": 0,
+        }
+        def safe_int(var, key):
+            try:
+                return int(var.get())
+            except Exception:
+                value = int(fallback[key])
+                var.set(value)
+                return value
+        def safe_float(var, key):
+            try:
+                return float(var.get())
+            except Exception:
+                value = float(fallback[key])
+                var.set(value)
+                return value
+        def safe_bool(var):
+            try:
+                return bool(var.get())
+            except Exception:
+                var.set(False)
+                return False
         with self.settings_lock:
             self.settings = {
                 "port": self.port.get(),
-                "baudrate": int(self.baudrate.get()),
-                "pan_id": int(self.pan_id.get()),
-                "tilt_id": int(self.tilt_id.get()),
-                "move_time_ms": int(self.move_time_ms.get()),
-                "control_period_ms": int(self.control_period_ms.get()),
-                "track_enabled": bool(self.track_enabled.get()),
-                "pan_enabled": bool(self.pan_enabled.get()),
-                "tilt_enabled": bool(self.tilt_enabled.get()),
-                "kp_x": float(self.kp_x.get()),
-                "ki_x": float(self.ki_x.get()),
-                "kd_x": float(self.kd_x.get()),
-                "kp_y": float(self.kp_y.get()),
-                "ki_y": float(self.ki_y.get()),
-                "kd_y": float(self.kd_y.get()),
-                "deadband": float(self.error_deadband.get()),
-                "max_delta_deg_per_sec": float(self.max_delta_deg_per_sec.get()),
-                "exposure": float(self.exposure_value.get()),
-                "gain": float(self.analogue_gain.get()),
-                "ae_enable": bool(self.ae_enable.get()),
-                "ksize": int(self.ksize.get()),
-                "min_dist": int(self.min_dist.get()),
-                "param1": int(self.param1.get()),
-                "param2": int(self.param2.get()),
-                "min_radius": int(self.min_radius.get()),
-                "max_radius": int(self.max_radius.get()),
-                "x_bias": int(self.x_bias.get()),
-                "y_bias": int(self.y_bias.get()),
+                "baudrate": safe_int(self.baudrate, "baudrate"),
+                "pan_id": safe_int(self.pan_id, "pan_id"),
+                "tilt_id": safe_int(self.tilt_id, "tilt_id"),
+                "move_time_ms": safe_int(self.move_time_ms, "move_time_ms"),
+                "control_period_ms": safe_int(self.control_period_ms, "control_period_ms"),
+                "track_enabled": safe_bool(self.track_enabled),
+                "pan_enabled": safe_bool(self.pan_enabled),
+                "tilt_enabled": safe_bool(self.tilt_enabled),
+                "kp_x": safe_float(self.kp_x, "kp_x"),
+                "ki_x": safe_float(self.ki_x, "ki_x"),
+                "kd_x": safe_float(self.kd_x, "kd_x"),
+                "kp_y": safe_float(self.kp_y, "kp_y"),
+                "ki_y": safe_float(self.ki_y, "ki_y"),
+                "kd_y": safe_float(self.kd_y, "kd_y"),
+                "deadband": safe_float(self.error_deadband, "deadband"),
+                "max_delta_deg_per_sec": safe_float(self.max_delta_deg_per_sec, "max_delta_deg_per_sec"),
+                "exposure": safe_float(self.exposure_value, "exposure"),
+                "gain": safe_float(self.analogue_gain, "gain"),
+                "ae_enable": safe_bool(self.ae_enable),
+                "ksize": safe_int(self.ksize, "ksize"),
+                "min_dist": safe_int(self.min_dist, "min_dist"),
+                "param1": safe_int(self.param1, "param1"),
+                "param2": safe_int(self.param2, "param2"),
+                "min_radius": safe_int(self.min_radius, "min_radius"),
+                "max_radius": safe_int(self.max_radius, "max_radius"),
+                "x_bias": safe_int(self.x_bias, "x_bias"),
+                "y_bias": safe_int(self.y_bias, "y_bias"),
             }
 
     def _get_settings(self):
@@ -223,6 +268,8 @@ class CircleTrackerGUI:
             if key not in data:
                 continue
             value = data[key]
+            if value is None or value == "":
+                continue
             if isinstance(var, tk.BooleanVar):
                 var.set(bool(value))
             elif isinstance(var, tk.IntVar):
@@ -575,9 +622,10 @@ class CircleTrackerGUI:
                     )
                     self.servo.move_angle(wait=False)
 
-                frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
+                # Picamera2 RGB888 is actually BGR layout [B,G,R]; keep as-is for OpenCV (BGR)
+                # and convert to RGB only once for display
                 self._draw_overlay(
-                    frame=frame_bgr,
+                    frame=frame_rgb,
                     center=(center_x, center_y),
                     detection=detection,
                     target=(int(round(target_x)), int(round(target_y))),
@@ -586,7 +634,7 @@ class CircleTrackerGUI:
                     error=(error_x, error_y),
                     dt=dt,
                 )
-                frame_rgb_show = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+                frame_rgb_show = cv2.cvtColor(frame_rgb, cv2.COLOR_BGR2RGB)
 
                 payload = (
                     frame_rgb_show,
@@ -604,11 +652,9 @@ class CircleTrackerGUI:
                 except Exception:
                     pass
 
-                period_ms = max(10, int(s["control_period_ms"]))
-                move_ms = max(0, int(s["move_time_ms"]))
-                effective_ms = max(period_ms, move_ms)
+                period_ms = max(1, int(s["control_period_ms"]))
                 elapsed_ms = int((time.time() - loop_start) * 1000)
-                sleep_ms = max(0, effective_ms - elapsed_ms)
+                sleep_ms = max(0, period_ms - elapsed_ms)
                 if sleep_ms > 0:
                     time.sleep(sleep_ms / 1000.0)
         except Exception as exc:
@@ -701,7 +747,7 @@ class CircleTrackerGUI:
             return
         self.picam2 = Picamera2()
         self.picam2.start_preview(Preview.NULL)
-        framerate = 30
+        framerate = 60
         frame_duration = int(1000000 / framerate)
         config = self.picam2.create_video_configuration(
             controls={"FrameDurationLimits": (frame_duration, frame_duration)}
