@@ -863,19 +863,21 @@ class CircleTrackerGUI:
                 
                 if s.get("laser_align_mode", False) and green_data is not None:
                     # 【指示对准模式】尝试寻找激光光斑
-                    blurred_green, _, _, scale = green_data
+                    # 注意：green_data 中的 blurred_green 已经是经过 ROI 裁切（如果启用了 ROI）和降采样的图像
+                    # 并且 offset_x, offset_y 记录了它在全图中的偏移量
+                    blurred_green, offset_x, offset_y, scale = green_data
                     _, binary = cv2.threshold(blurred_green, s.get("laser_threshold", 240), 255, cv2.THRESH_BINARY)
                     num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary, connectivity=8)
                     
                     if num_labels > 1:
-                        # 找到了激光光斑
+                        # 找到了激光光斑（在 ROI 内）
                         laser_found = True
                         largest_label = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
                         cx, cy = centroids[largest_label]
                         
-                        # 转换回原图坐标
-                        laser_x = cx / scale
-                        laser_y = cy / scale
+                        # 转换回全图坐标（加上 ROI 的 offset）
+                        laser_x = (cx / scale) + offset_x
+                        laser_y = (cy / scale) + offset_y
                         laser_spot_display = (laser_x, laser_y)
                         
                         # 在指示模式下发现光斑：直接使用光斑坐标对比真实圆心计算误差。
