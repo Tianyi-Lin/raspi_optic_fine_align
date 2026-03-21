@@ -15,6 +15,7 @@ from picamera2 import Picamera2, Preview
 from PID import PID
 from bus_servo import BusServo
 from laser_ranger_passive import LaserRangerQueryMonitor
+from laser_ranger_setting import configure_laser_module
 
 
 class Kalman2D:
@@ -187,6 +188,17 @@ class CircleTrackerGUI:
             self._ensure_servo()
         except Exception as exc:
             print(f"[WARNING] Servo init failed before GUI start: {exc}")
+            
+        # 强制配置激光测距模块为查询模式 (Passive / Inquire)
+        configure_laser_module(
+            port="/dev/ttyAMA2", 
+            baudrate=115200, 
+            module_id=0,
+            output_mode="inquire",
+            range_mode="medium",
+            interface_mode="uart",
+            uart_baudrate=115200
+        )
             
         # 初始化激光测距模块 (被动查询模式)
         # 注意：这里不再调用 start() 开启后台死循环，而是由主循环按需调用 query_once()
