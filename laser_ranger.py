@@ -29,7 +29,7 @@ class LaserRangerMonitor:
     Byte 15  : checksum = sum(byte[0:15]) % 256
     """
 
-    def __init__(self, port="/dev/ttyAMA2", baudrate=115200, history_len=500):
+    def __init__(self, port="/dev/ttyAMA1", baudrate=115200, history_len=500):
         self.port = port
         self.baudrate = baudrate
         self.serial = None
@@ -418,7 +418,7 @@ class MonitorGUI:
 
 
 if __name__ == "__main__":
-    monitor = LaserRangerMonitor(port="/dev/ttyAMA2", baudrate=115200, history_len=500)
+    monitor = LaserRangerMonitor(port="/dev/ttyAMA1", baudrate=115200, history_len=500)
     monitor.start()
 
     root = tk.Tk()

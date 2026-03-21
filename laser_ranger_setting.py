@@ -159,7 +159,7 @@ def read_response(ser, timeout=0.5):
 
 
 def configure_laser_module(
-    port="/dev/ttyAMA2", 
+    port="/dev/ttyAMA1", 
     baudrate=115200, 
     module_id=0,
     output_mode="inquire",
