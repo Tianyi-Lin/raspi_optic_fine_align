@@ -913,8 +913,12 @@ class CircleTrackerGUI:
                 
                 if green_data is not None:
                     blurred_green, offset_x, offset_y, scale = green_data
-                    # 将单通道转为3通道灰度图，以便和彩色原图拼接
-                    green_rgb = cv2.cvtColor(blurred_green, cv2.COLOR_GRAY2RGB)
+                    
+                    # 创建一个全黑的RGB图像用于放绿色通道
+                    green_rgb = np.zeros((blurred_green.shape[0], blurred_green.shape[1], 3), dtype=np.uint8)
+                    # 将灰度数据放入绿色通道 (RGB顺序，索引为1)
+                    green_rgb[:, :, 1] = blurred_green
+                    
                     # 如果有ROI，将其放回原尺寸的黑底图像中
                     full_green = np.zeros_like(frame_rgb_disp)
                     gh, gw = green_rgb.shape[:2]
@@ -932,6 +936,13 @@ class CircleTrackerGUI:
                     
                     if roi_h > 0 and roi_w > 0:
                         full_green[offset_y:end_y, offset_x:end_x] = green_resized[:roi_h, :roi_w]
+                    
+                    # 在绿色通道图上标注检测到的圆圈
+                    if detection is not None:
+                        x, y, r = detection
+                        x, y, r = int(round(x)), int(round(y)), int(round(r))
+                        cv2.circle(full_green, (x, y), 3, (255, 0, 0), -1)  # 红心
+                        cv2.circle(full_green, (x, y), r, (255, 0, 0), 2)   # 红圈
                     
                     # 在图上添加文字说明
                     cv2.putText(full_green, "Green Channel (Processed)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
