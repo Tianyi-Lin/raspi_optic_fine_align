@@ -1358,9 +1358,9 @@ def main():
         root = ThemedTk(theme="arc") # "arc" 主题的复选框带有清晰的蓝色勾选标记
         root.title("Raspi Optic Fine Align")
     except ImportError:
-        # 如果没有安装 ttkthemes，则回退到默认并尝试设置一个看起来更清晰的内置主题
+        # 如果没有安装 ttkthemes，则回退到 'alt' 主题，它的复选框显示为正常的打勾，而不是 clam 主题的叉号
         try:
-            ttk.Style().theme_use('clam') # clam主题的复选框也会比默认的好认
+            ttk.Style().theme_use('alt')
         except:
             pass
 
