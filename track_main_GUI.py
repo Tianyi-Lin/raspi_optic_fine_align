@@ -1152,11 +1152,19 @@ class CircleTrackerGUI:
         return (x, y, r), blurred, offset_x, offset_y, scale
 
     def _draw_overlay(self, frame, center, detection, target, pred, radius, error, dt, bounds=None):
+        # 确保所有坐标都是整数，避免 OpenCV 报 "can't parse center" 错误
+        center = (int(round(center[0])), int(round(center[1])))
+        target = (int(round(target[0])), int(round(target[1])))
+        pred = (int(round(pred[0])), int(round(pred[1])))
+        radius = int(round(radius))
+
         cv2.circle(frame, center, 3, (255, 0, 255), -1)
         cv2.circle(frame, target, 4, (0, 255, 0), -1)
         cv2.circle(frame, pred, 3, (255, 255, 0), -1)
         if detection is not None:
             x, y, r = detection
+            # EMA平滑后可能是浮点数，需要转为整型
+            x, y, r = int(round(x)), int(round(y)), int(round(r))
             cv2.circle(frame, (x, y), 3, (0, 0, 255), -1)
             cv2.circle(frame, (x, y), r, (0, 0, 255), 1)
             if radius > 0:
