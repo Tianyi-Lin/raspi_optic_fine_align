@@ -656,10 +656,10 @@ class CircleTrackerGUI:
         rv2 = 0
         rv2 = self._grid_slider(right_vis, rv2, 0, "模糊核大小", self.ksize, 3, 19)
         
-        # 视差校正偏置 (盲对准模式下使用)
+        # 视差校正偏置
         rv2 = self._grid_slider(right_vis, rv2, 0, "X偏置", self.x_bias, -200, 200)
         rv2 = self._grid_slider(right_vis, rv2, 0, "Y偏置", self.y_bias, -200, 200)
-        ttk.Label(right_vis, text="用于校正激光器与相机光轴的物理视差(仅盲对准时生效)", font=("", 8), foreground="gray", wraplength=180).grid(row=rv2-1, column=0, columnspan=2, sticky="w", pady=(0, 5))
+        ttk.Label(right_vis, text="校正激光器与相机的物理视差。指示模式下发现光斑后自动失效", font=("", 8), foreground="gray", wraplength=180).grid(row=rv2-1, column=0, columnspan=2, sticky="w", pady=(0, 5))
         
         # 激光指示对准配置
         ttk.Separator(right_vis, orient=tk.HORIZONTAL).grid(row=rv2, column=0, columnspan=2, sticky="ew", pady=10)
@@ -859,16 +859,17 @@ class CircleTrackerGUI:
 
                 # 处理激光对准逻辑
                 laser_spot_display = None
+                laser_found = False
+                
                 if s.get("laser_align_mode", False) and green_data is not None:
-                    # 【指示对准模式】
-                    # 在此模式下，直接寻找光斑，并将光斑的中心作为实际位置。
-                    # 此时不需要使用 x_bias/y_bias，因为反馈闭环已经是"真实光斑" vs "真实圆心"了。
+                    # 【指示对准模式】尝试寻找激光光斑
                     blurred_green, _, _, scale = green_data
                     _, binary = cv2.threshold(blurred_green, s.get("laser_threshold", 240), 255, cv2.THRESH_BINARY)
                     num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary, connectivity=8)
                     
                     if num_labels > 1:
-                        # 找到最大的连通域（排除背景0）
+                        # 找到了激光光斑
+                        laser_found = True
                         largest_label = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
                         cx, cy = centroids[largest_label]
                         
@@ -877,17 +878,15 @@ class CircleTrackerGUI:
                         laser_y = cy / scale
                         laser_spot_display = (laser_x, laser_y)
                         
-                        # 误差 = 激光点坐标 - 圆心坐标
+                        # 在指示模式下发现光斑：直接使用光斑坐标对比真实圆心计算误差。
+                        # 此时抛弃 bias（因为已经在看真实落点了）
                         error_x = laser_x - target_x
                         error_y = laser_y - target_y
-                    else:
-                        # 如果开启了指示对准但没找到激光点，保持不动
-                        error_x = 0.0
-                        error_y = 0.0
-                else:
-                    # 【盲对准模式】
-                    # 在此模式下，不知道激光点到底打在哪。
-                    # 我们需要将目标圆心 (target_x, target_y) 加上一个手动测量的补偿值 (x_bias, y_bias)，
+
+                # 如果没有开启指示对准，或者开启了但【没找到光斑】
+                if not laser_found:
+                    # 【盲对准模式 / 回退模式】
+                    # 将目标圆心 (target_x, target_y) 加上一个手动测量的补偿值 (x_bias, y_bias)，
                     # 这个补偿值代表了【相机中心光轴】与【激光器光轴】之间的物理安装视差。
                     # 然后让相机中心去对准这个加了偏置的虚拟圆心。
                     target_x += float(s["x_bias"])
