@@ -34,6 +34,8 @@ class SerialTransport:
 
     def write(self, data: bytes):
         self._before_write()
+        # 发送指令前清空一下接收缓冲区，避免之前残留的垃圾数据干扰读响应
+        self.ser.reset_input_buffer()
         self.ser.write(data)
         self.ser.flush()
 
