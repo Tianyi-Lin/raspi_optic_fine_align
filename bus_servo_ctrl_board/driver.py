@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Dict, List, Tuple, Optional
+from typing import List, Tuple, Optional
 import time
 
 from protocol import (
@@ -30,28 +30,32 @@ class BusServoBoardDriver:
         frame = build_frame(cmd, params)
         self.transport.write(frame)
 
-    def request(self, cmd: int, params=(), expect_cmd: Optional[int] = None, retries: int = 3):
+    def request(self, cmd: int, params=(), expect_cmd: Optional[int] = None, retries: int = 5):
         last_err = None
+
         for _ in range(retries):
             try:
-                if hasattr(self.transport, "ser"):
-                    self.transport.ser.reset_input_buffer()
+                if hasattr(self.transport, "reset_input_buffer"):
+                    self.transport.reset_input_buffer()
 
                 frame = build_frame(cmd, params)
                 self.transport.write(frame)
-                time.sleep(0.005)
+
+                # 给控制板一点响应时间
+                time.sleep(0.02)
 
                 raw = self.transport.read_frame()
                 resp = parse_frame(raw)
 
-                if expect_cmd is None:
-                    expect_cmd = cmd
-                if resp.cmd != expect_cmd:
-                    raise ValueError(f"unexpected cmd: {resp.cmd}, expect {expect_cmd}")
+                expect = cmd if expect_cmd is None else expect_cmd
+                if resp.cmd != expect:
+                    raise ValueError(f"unexpected cmd: {resp.cmd}, expect {expect}")
+
                 return resp
+
             except Exception as e:
                 last_err = e
-                time.sleep(0.03)
+                time.sleep(0.05)
 
         raise last_err
 
@@ -61,7 +65,6 @@ class BusServoBoardDriver:
     def move_servos(self, servo_positions: List[Tuple[int, int]], time_ms: int):
         """
         servo_positions: [(id, pos), ...]
-        pos 范围通常为 0~1000
         """
         if not servo_positions:
             raise ValueError("servo_positions cannot be empty")
@@ -104,12 +107,12 @@ class BusServoBoardDriver:
         self.send_only(BoardCmd.CMD_ACTION_GROUP_SPEED, params)
 
     # -------------------------
-    # 读取控制板电压
+    # 读控制板电压
     # -------------------------
     def get_battery_voltage_mv(self) -> int:
         resp = self.request(BoardCmd.CMD_GET_BATTERY_VOLTAGE)
         if len(resp.params) != 2:
-            raise ValueError("invalid battery voltage response length")
+            raise ValueError(f"invalid battery voltage response length: {len(resp.params)}")
         return unpack_u16_le(resp.params[0], resp.params[1])
 
     # -------------------------
@@ -118,6 +121,9 @@ class BusServoBoardDriver:
     def unload_servos(self, servo_ids: List[int]):
         if not servo_ids:
             raise ValueError("servo_ids cannot be empty")
+        for sid in servo_ids:
+            if not (0 <= sid <= 255):
+                raise ValueError(f"invalid servo id: {sid}")
         params = [len(servo_ids), *servo_ids]
         self.send_only(BoardCmd.CMD_MULT_SERVO_UNLOAD, params)
 
@@ -127,13 +133,15 @@ class BusServoBoardDriver:
     def read_servo_positions(self, servo_ids: List[int]) -> List[ServoPosition]:
         if not servo_ids:
             raise ValueError("servo_ids cannot be empty")
+        for sid in servo_ids:
+            if not (0 <= sid <= 255):
+                raise ValueError(f"invalid servo id: {sid}")
 
         params = [len(servo_ids), *servo_ids]
         resp = self.request(BoardCmd.CMD_MULT_SERVO_POS_READ, params)
 
-        # 返回格式：
-        # 参数1 = 个数
-        # 后面每个舵机占 3 字节：[id, posL, posH]
+        # 返回参数格式：
+        # [count, id1, pos1L, pos1H, id2, pos2L, pos2H, ...]
         if len(resp.params) < 1:
             raise ValueError("invalid position response length")
 
