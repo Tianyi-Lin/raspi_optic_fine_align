@@ -142,6 +142,15 @@ class CircleTrackerGUI:
         self.latest_detection_time = 0.0
         self.detect_stale_sec = 0.3
 
+        self.fps_cam = 0.0
+        self.fps_ctrl = 0.0
+        self.last_cam_frame_id = 0
+        self.last_cam_time = 0.0
+
+        # 用于平滑检测结果的EMA（指数移动平均）状态
+        self.smoothed_detection = None
+        self.ema_alpha = 0.3  # 平滑系数，越小越平滑但延迟越大，越大响应越快但抖动越大
+
         self._load_settings()
         self._build_ui()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -924,8 +933,23 @@ class CircleTrackerGUI:
                     max_radius=s["max_radius"],
                     roi=roi,
                 )
+                
+                # 应用EMA低通滤波稳定检测结果
+                if detection is not None:
+                    if self.smoothed_detection is None:
+                        self.smoothed_detection = list(detection)
+                    else:
+                        alpha = self.ema_alpha
+                        self.smoothed_detection[0] = alpha * detection[0] + (1 - alpha) * self.smoothed_detection[0]
+                        self.smoothed_detection[1] = alpha * detection[1] + (1 - alpha) * self.smoothed_detection[1]
+                        self.smoothed_detection[2] = alpha * detection[2] + (1 - alpha) * self.smoothed_detection[2]
+                    detection_to_save = tuple(self.smoothed_detection)
+                else:
+                    self.smoothed_detection = None
+                    detection_to_save = None
+
                 with self.detect_lock:
-                    self.latest_detection = detection
+                    self.latest_detection = detection_to_save
                     self.latest_detection_time = time.time()
                     last_processed_id = frame_id
         except Exception as exc:
@@ -954,10 +978,22 @@ class CircleTrackerGUI:
             photo = ImageTk.PhotoImage(image=image)
             self.preview_label.configure(image=photo)
             self.preview_label.image = photo
+            
+            # 计算真实相机FPS
+            current_time = time.time()
+            with self.detect_lock:
+                current_frame_id = self.latest_frame_id
+            if current_frame_id > self.last_cam_frame_id:
+                if self.last_cam_time > 0:
+                    cam_dt = current_time - self.last_cam_time
+                    self.fps_cam = (current_frame_id - self.last_cam_frame_id) / cam_dt
+                self.last_cam_time = current_time
+                self.last_cam_frame_id = current_frame_id
+
             if dt > 0:
-                self.fps = 1.0 / dt
+                self.fps_ctrl = 1.0 / dt
             self.status_text.set(
-                f"帧率={self.fps:.1f}  水平={pan:.2f}  俯仰={tilt:.2f}  误差X={error_x:.1f}  误差Y={error_y:.1f}  圆={int(circle_found)}  半径={radius}  跟踪={int(do_track)}"
+                f"相机FPS={self.fps_cam:.1f}  控制Hz={self.fps_ctrl:.1f}  水平={pan:.2f}  俯仰={tilt:.2f}  误差X={error_x:.1f}  误差Y={error_y:.1f}  圆={int(circle_found)}  半径={radius}  跟踪={int(do_track)}"
             )
 
         self.after_id = self.root.after(30, self._ui_loop)
