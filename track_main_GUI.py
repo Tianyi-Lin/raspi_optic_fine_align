@@ -670,13 +670,27 @@ class CircleTrackerGUI:
                 tilt_min = float(s.get("tilt_min", -90.0))
                 tilt_max = float(s.get("tilt_max", 90.0))
 
+                # 检测是否到达边界
+                pan_at_min = self.current_pan_angle <= pan_min
+                pan_at_max = self.current_pan_angle >= pan_max
+                tilt_at_min = self.current_tilt_angle <= tilt_min
+                tilt_at_max = self.current_tilt_angle >= tilt_max
+
                 if do_track and s["pan_enabled"]:
+                    # 如果到达边界且误差方向使舵机继续向边界运动，则清零error并重置PID
+                    if (pan_at_min and error_x > 0) or (pan_at_max and error_x < 0):
+                        error_x = 0.0
+                        self.pid_x.reset()
                     delta_x = self.pid_x.update(error_x, dt=dt)
                     desired_pan = self.current_pan_angle + delta_x
                     step_pan = max(-max_step, min(max_step, desired_pan - self.current_pan_angle))
                     self.current_pan_angle = max(pan_min, min(pan_max, self.current_pan_angle + step_pan))
 
                 if do_track and s["tilt_enabled"]:
+                    # 如果到达边界且误差方向使舵机继续向边界运动，则清零error并重置PID
+                    if (tilt_at_min and error_y > 0) or (tilt_at_max and error_y < 0):
+                        error_y = 0.0
+                        self.pid_y.reset()
                     delta_y = self.pid_y.update(error_y, dt=dt)
                     desired_tilt = self.current_tilt_angle + delta_y
                     step_tilt = max(-max_step, min(max_step, desired_tilt - self.current_tilt_angle))
@@ -702,6 +716,7 @@ class CircleTrackerGUI:
                     radius=radius,
                     error=(error_x, error_y),
                     dt=dt,
+                    bounds=(pan_at_min, pan_at_max, tilt_at_min, tilt_at_max),
                 )
                 frame_rgb_show = cv2.cvtColor(frame_rgb, cv2.COLOR_BGR2RGB)
 
@@ -915,7 +930,7 @@ class CircleTrackerGUI:
         r = int(round(chosen[2] / scale))
         return x, y, r
 
-    def _draw_overlay(self, frame, center, detection, target, pred, radius, error, dt):
+    def _draw_overlay(self, frame, center, detection, target, pred, radius, error, dt, bounds=None):
         cv2.circle(frame, center, 3, (255, 0, 255), -1)
         cv2.circle(frame, target, 4, (0, 255, 0), -1)
         cv2.circle(frame, pred, 3, (255, 255, 0), -1)
@@ -929,6 +944,25 @@ class CircleTrackerGUI:
         cv2.putText(frame, f"error_x={error_x:.2f}", (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
         cv2.putText(frame, f"error_y={error_y:.2f}", (10, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
         cv2.putText(frame, f"dt={dt:.3f}s", (10, 72), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+
+        # 边界到达提示
+        if bounds is not None:
+            pan_at_min, pan_at_max, tilt_at_min, tilt_at_max = bounds
+            h, w = frame.shape[:2]
+            # 水平边界提示（左右边框变红）
+            if pan_at_min:
+                cv2.line(frame, (0, 0), (0, h), (0, 0, 255), 4)
+                cv2.putText(frame, "LEFT LIMIT", (10, h//2), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+            if pan_at_max:
+                cv2.line(frame, (w-1, 0), (w-1, h), (0, 0, 255), 4)
+                cv2.putText(frame, "RIGHT LIMIT", (w-120, h//2), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+            # 俯仰边界提示（上下边框变红）
+            if tilt_at_min:
+                cv2.line(frame, (0, 0), (w, 0), (0, 0, 255), 4)
+                cv2.putText(frame, "UP LIMIT", (w//2-50, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+            if tilt_at_max:
+                cv2.line(frame, (0, h-1), (w, h-1), (0, 0, 255), 4)
+                cv2.putText(frame, "DOWN LIMIT", (w//2-60, h-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
 
     def on_close(self):
         self.tracking_active = False
