@@ -998,101 +998,10 @@ class CircleTrackerGUI:
                     )
                     self.servo.move_angle(wait=False)
 
-                # Picamera2 RGB888 is actually BGR layout [B,G,R]; keep as-is for OpenCV (BGR)
-                # and convert to RGB only once for display
-
-                self._draw_overlay(
-                    frame=frame_rgb,
-                    center=(center_x, center_y),
-                    detection=detection,
-                    target=(int(round(target_x)), int(round(target_y))),
-                    pred=(int(round(pred_x)), int(round(pred_y))),
-                    radius=radius,
-                    error=(error_x, error_y),
-                    dt=dt,
-                    bounds=(pan_at_min, pan_at_max, tilt_at_min, tilt_at_max),
-                    laser_spot=laser_spot_display,
-                )
-                
-                # 只有在需要更新 UI 时（或者控制频率较低时）才进行耗时的图像拼接
-                # 为了保持高控制频率，我们可以跳帧渲染。假设我们只需要15-20fps的显示刷新。
-                # 但目前为了最简单，我们可以先优化 numpy 操作
-                
-                # 创建双屏显示：原图 + 绿色通道处理图
-                frame_rgb_disp = cv2.cvtColor(frame_rgb, cv2.COLOR_BGR2RGB)
-                
-                if green_data is not None:
-                    # _detect_circle 现在返回 6 个值，存入 latest_green_channel 时是 5 个值的元组
-                    blurred_green, blurred_red, offset_x, offset_y, scale = green_data
-                    
-                    gh, gw = blurred_green.shape[:2]
-                    orig_w = int(gw / scale)
-                    orig_h = int(gh / scale)
-                    
-                    # 放入全尺寸图中
-                    end_y = min(h, offset_y + orig_h)
-                    end_x = min(w, offset_x + orig_w)
-                    roi_h = end_y - offset_y
-                    roi_w = end_x - offset_x
-                    
-                    full_green = np.zeros_like(frame_rgb_disp)
-                    full_red = np.zeros_like(frame_rgb_disp)
-                    
-                    if roi_h > 0 and roi_w > 0:
-                        # 先缩放单通道，再放入RGB，比先转RGB再缩放快3倍！
-                        green_resized_single = cv2.resize(blurred_green, (orig_w, orig_h))
-                        red_resized_single = cv2.resize(blurred_red, (orig_w, orig_h))
-                        
-                        full_green[offset_y:end_y, offset_x:end_x, 1] = green_resized_single[:roi_h, :roi_w]
-                        full_red[offset_y:end_y, offset_x:end_x, 0] = red_resized_single[:roi_h, :roi_w]
-                    
-                    # 在绿色通道图上标注检测到的圆圈
-                    if detection is not None:
-                        x, y, r = detection
-                        x, y, r = int(round(x)), int(round(y)), int(round(r))
-                        cv2.circle(full_green, (x, y), 3, (255, 0, 0), -1)  # 红心
-                        cv2.circle(full_green, (x, y), r, (255, 0, 0), 2)   # 红圈
-                        
-                    # 在绿色通道图上标注识别到的激光光斑
-                    if laser_spot_display is not None:
-                        lx, ly = int(round(laser_spot_display[0])), int(round(laser_spot_display[1]))
-                        # 用醒目的黄色十字星标注光斑位置
-                        cv2.line(full_green, (lx-10, ly), (lx+10, ly), (255, 255, 0), 2)
-                        cv2.line(full_green, (lx, ly-10), (lx, ly+10), (255, 255, 0), 2)
-                        cv2.putText(full_green, "Laser", (lx+10, ly-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
-                    
-                    # 在图上添加文字说明
-                    cv2.putText(full_green, "Green Channel (Processed)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                    cv2.putText(full_red, "Red Channel (Processed)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
-                    
-                    # 准备二值化图像用于显示 (如果存在)
-                    if laser_binary_display is not None:
-                        full_bin = np.zeros_like(frame_rgb_disp)
-                        bin_resized = cv2.resize(laser_binary_display, (orig_w, orig_h))
-                        if roi_h > 0 and roi_w > 0:
-                            # 激光是在红色通道找的，所以我们把它涂成红色显示
-                            full_bin[offset_y:end_y, offset_x:end_x, 0] = bin_resized[:roi_h, :roi_w]
-                        cv2.putText(full_bin, "Laser Binary Mask", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-                    else:
-                        full_bin = np.zeros_like(frame_rgb_disp)
-                        cv2.putText(full_bin, "Laser Binary (Disabled)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (128, 128, 128), 2)
-                    
-                    # 2x2 拼接：
-                    # [ 彩色原图 ] [ 绿色通道 ]
-                    # [ 红色通道 ] [ 二值化图 ]
-                    top_row = np.hstack((frame_rgb_disp, full_green))
-                    bottom_row = np.hstack((full_red, full_bin))
-                    frame_rgb_show = np.vstack((top_row, bottom_row))
-                else:
-                    # 如果还没有处理好的图，就用黑图补齐 2x2 布局
-                    full_black = np.zeros_like(frame_rgb_disp)
-                    cv2.putText(full_black, "Waiting...", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                    top_row = np.hstack((frame_rgb_disp, full_black))
-                    bottom_row = np.hstack((full_black, full_black))
-                    frame_rgb_show = np.vstack((top_row, bottom_row))
-
+                # 创建双屏显示的原始数据，转移到 UI 线程去拼接
+                # 这里只发送原始数据给 UI 线程，彻底解放控制线程的耗时
                 payload = (
-                    frame_rgb_show,
+                    frame_rgb, # 原始 BGR 图像
                     dt,
                     (error_x, error_y),
                     (self.current_pan_angle, self.current_tilt_angle),
@@ -1100,6 +1009,13 @@ class CircleTrackerGUI:
                     radius,
                     do_track,
                     self.laser_locked_in_circle,
+                    green_data, # 包含 (blurred_green, blurred_red, offset_x, offset_y, scale)
+                    detection,
+                    (target_x, target_y),
+                    (pred_x, pred_y),
+                    laser_spot_display,
+                    (pan_at_min, pan_at_max, tilt_at_min, tilt_at_max),
+                    s.get("laser_threshold", 240)
                 )
                 try:
                     if self.frame_queue.full():
@@ -1192,7 +1108,101 @@ class CircleTrackerGUI:
             pass
 
         if latest is not None:
-            frame_rgb_show, dt, (error_x, error_y), (pan, tilt), circle_found, radius, do_track, laser_locked = latest
+            (
+                frame_rgb,
+                dt,
+                (error_x, error_y),
+                (pan, tilt),
+                circle_found,
+                radius,
+                do_track,
+                laser_locked,
+                green_data,
+                detection,
+                (target_x, target_y),
+                (pred_x, pred_y),
+                laser_spot_display,
+                bounds,
+                laser_threshold
+            ) = latest
+            
+            h, w = frame_rgb.shape[:2]
+            center_x, center_y = w // 2, h // 2
+            
+            # 在 UI 线程中进行耗时的绘制和拼接
+            self._draw_overlay(
+                frame=frame_rgb,
+                center=(center_x, center_y),
+                detection=detection,
+                target=(int(round(target_x)), int(round(target_y))),
+                pred=(int(round(pred_x)), int(round(pred_y))),
+                radius=radius,
+                error=(error_x, error_y),
+                dt=dt,
+                bounds=bounds,
+                laser_spot=laser_spot_display,
+            )
+            
+            frame_rgb_disp = cv2.cvtColor(frame_rgb, cv2.COLOR_BGR2RGB)
+            
+            if green_data is not None:
+                blurred_green, blurred_red, offset_x, offset_y, scale = green_data
+                
+                gh, gw = blurred_green.shape[:2]
+                orig_w = int(gw / scale)
+                orig_h = int(gh / scale)
+                
+                end_y = min(h, offset_y + orig_h)
+                end_x = min(w, offset_x + orig_w)
+                roi_h = end_y - offset_y
+                roi_w = end_x - offset_x
+                
+                full_green = np.zeros_like(frame_rgb_disp)
+                full_red = np.zeros_like(frame_rgb_disp)
+                
+                if roi_h > 0 and roi_w > 0:
+                    green_resized_single = cv2.resize(blurred_green, (orig_w, orig_h))
+                    red_resized_single = cv2.resize(blurred_red, (orig_w, orig_h))
+                    
+                    full_green[offset_y:end_y, offset_x:end_x, 1] = green_resized_single[:roi_h, :roi_w]
+                    full_red[offset_y:end_y, offset_x:end_x, 0] = red_resized_single[:roi_h, :roi_w]
+                
+                if detection is not None:
+                    x, y, r = detection
+                    x, y, r = int(round(x)), int(round(y)), int(round(r))
+                    cv2.circle(full_green, (x, y), 3, (255, 0, 0), -1)
+                    cv2.circle(full_green, (x, y), r, (255, 0, 0), 2)
+                    
+                if laser_spot_display is not None:
+                    lx, ly = int(round(laser_spot_display[0])), int(round(laser_spot_display[1]))
+                    cv2.line(full_green, (lx-10, ly), (lx+10, ly), (255, 255, 0), 2)
+                    cv2.line(full_green, (lx, ly-10), (lx, ly+10), (255, 255, 0), 2)
+                    cv2.putText(full_green, "Laser", (lx+10, ly-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
+                
+                cv2.putText(full_green, "Green Channel (Processed)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                cv2.putText(full_red, "Red Channel (Processed)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+                
+                if self.laser_align_mode.get():
+                    _, binary = cv2.threshold(blurred_red, laser_threshold, 255, cv2.THRESH_BINARY)
+                    full_bin = np.zeros_like(frame_rgb_disp)
+                    bin_resized = cv2.resize(binary, (orig_w, orig_h))
+                    if roi_h > 0 and roi_w > 0:
+                        full_bin[offset_y:end_y, offset_x:end_x, 0] = bin_resized[:roi_h, :roi_w]
+                    cv2.putText(full_bin, "Laser Binary Mask", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+                else:
+                    full_bin = np.zeros_like(frame_rgb_disp)
+                    cv2.putText(full_bin, "Laser Binary (Disabled)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (128, 128, 128), 2)
+                
+                top_row = np.hstack((frame_rgb_disp, full_green))
+                bottom_row = np.hstack((full_red, full_bin))
+                frame_rgb_show = np.vstack((top_row, bottom_row))
+            else:
+                full_black = np.zeros_like(frame_rgb_disp)
+                cv2.putText(full_black, "Waiting...", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                top_row = np.hstack((frame_rgb_disp, full_black))
+                bottom_row = np.hstack((full_black, full_black))
+                frame_rgb_show = np.vstack((top_row, bottom_row))
+
             image = Image.fromarray(frame_rgb_show)
             photo = ImageTk.PhotoImage(image=image)
             self.preview_label.configure(image=photo)
