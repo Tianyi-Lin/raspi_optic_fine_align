@@ -142,7 +142,8 @@ class CircleTrackerGUI:
         self.active_pan_id = 1
         self.active_tilt_id = 2
         self.jog_step_deg = tk.DoubleVar(value=1.0)
-        self.servo_mode = tk.StringVar(value="调试板")
+        # self.servo_mode = tk.StringVar(value="调试板")
+        self.servo_mode = tk.StringVar(value="控制板")
         self.servo_status_mode = tk.StringVar(value=self.servo_mode.get())
         self.servo_status_pan = tk.StringVar(value="-")
         self.servo_status_tilt = tk.StringVar(value="-")
@@ -153,7 +154,8 @@ class CircleTrackerGUI:
         self._board_driver_cls = None
 
         self.port = tk.StringVar(value="/dev/ttyAMA1")
-        self.baudrate = tk.IntVar(value=115200)
+        # self.baudrate = tk.IntVar(value=115200)
+        self.baudrate = tk.IntVar(value=9600)
         self.pan_id = tk.IntVar(value=1)
         self.tilt_id = tk.IntVar(value=2)
         self.move_time_ms = tk.IntVar(value=40)
@@ -268,8 +270,8 @@ class CircleTrackerGUI:
 
     def _update_settings_from_vars(self):
         fallback = {
-            "servo_mode": "调试板",
-            "baudrate": 115200,
+            "servo_mode": "控制板",
+            "baudrate": 9600,
             "pan_id": 1,
             "tilt_id": 2,
             "move_time_ms": 40,
@@ -371,9 +373,9 @@ class CircleTrackerGUI:
     def _get_settings(self):
         # 实时从GUI变量读取，确保修改立即生效
         defaults = {
-            "servo_mode": "调试板",
+            "servo_mode": "控制板",
             "port": "/dev/ttyAMA1",
-            "baudrate": 115200,
+            "baudrate": 9600,
             "pan_id": 1,
             "tilt_id": 2,
             "move_time_ms": 40,
@@ -1548,6 +1550,10 @@ class CircleTrackerGUI:
         self.servo_status_voltage.set("-")
 
     def _on_servo_mode_change(self, *_):
+        if self.servo_mode.get() == "控制板":
+            self.baudrate.set(9600)
+        else:
+            self.baudrate.set(115200)
         self._release_servo()
 
     def _update_servo_status_labels(self, servo_status):
