@@ -1142,6 +1142,12 @@ class CircleTrackerGUI:
             servo_ids=[self.active_pan_id, self.active_tilt_id],
             moving_time=settings["move_time_ms"],
         )
+        # 程序启动时，默认让两个舵机回到中间(0度)
+        self.servo.set_angles([(self.active_pan_id, 0.0), (self.active_tilt_id, 0.0)])
+        self.servo.move_angle(wait=False)
+        self.current_pan_angle = 0.0
+        self.current_tilt_angle = 0.0
+        
         # 读取舵机硬件的物理边界并更新到GUI
         pan_min, pan_max = self.servo.read_hardware_angle_limits(self.active_pan_id)
         tilt_min, tilt_max = self.servo.read_hardware_angle_limits(self.active_tilt_id)
@@ -1293,7 +1299,11 @@ class CircleTrackerGUI:
 
 def main():
     root = tk.Tk()
-    root.geometry("1280x760")
+    root.title("Raspi Optic Fine Align")
+    # 增加宽度以适应双图像显示 (左侧控制面板宽约420, 右侧双图像各640 -> 420 + 1280 + padding)
+    root.geometry("1720x760")
+    # 允许自适应调整
+    root.resizable(True, True)
     app = CircleTrackerGUI(root)
     root.mainloop()
 
