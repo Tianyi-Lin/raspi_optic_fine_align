@@ -191,21 +191,11 @@ class BusServoDriver:
             raise ValueError("invalid vin response length")
         return unpack_u16_le(resp.params[0], resp.params[1])
 
-    def read_pos(self, servo_id: int, retries: int = 3, retry_gap: float = 0.03) -> int:
-        import time
-        last_err = None
-
-        for i in range(retries):
-            try:
-                resp = self.request(servo_id, ServoCmd.SERVO_POS_READ)
-                if len(resp.params) != 2:
-                    raise ValueError("invalid pos response length")
-                return unpack_i16_le(resp.params[0], resp.params[1])
-            except Exception as e:
-                last_err = e
-                time.sleep(retry_gap)
-
-        raise last_err
+    def read_pos(self, servo_id: int) -> int:
+        resp = self.request(servo_id, ServoCmd.SERVO_POS_READ)
+        if len(resp.params) != 2:
+            raise ValueError("invalid pos response length")
+        return unpack_i16_le(resp.params[0], resp.params[1])
 
     # -------------------------
     # 模式

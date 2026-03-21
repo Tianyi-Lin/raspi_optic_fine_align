@@ -44,24 +44,13 @@ class BusServo:
 
     def read_hardware_angle_limits(self, servo_id):
         """读取舵机硬件内置的角度限制，并转换为角度值。如果失败将抛出异常供上层处理。"""
-        # 底层 driver 并没有为 read_angle_limit 提供重试机制，这里加一个简单的重试
-        max_retries = 3
-        last_err = None
-        for attempt in range(max_retries):
-            try:
-                min_pos, max_pos = self.driver.read_angle_limit(servo_id)
-                # 原始值 0-1000 对应 -120度 到 +120度 (240度跨度)
-                # 500 对应 0度
-                # 公式: 角度 = (pos - 500) * 0.24
-                min_angle = (min_pos - 500) * 0.24
-                max_angle = (max_pos - 500) * 0.24
-                return min_angle, max_angle
-            except Exception as e:
-                last_err = e
-                time.sleep(0.05)
-                
-        # 彻底失败，不要返回兜底值，直接抛出，让外层的死循环拦截
-        raise Exception(f"Failed to read hardware angle limit for servo {servo_id} after {max_retries} retries: {last_err}")
+        min_pos, max_pos = self.driver.read_angle_limit(servo_id)
+        # 原始值 0-1000 对应 -120度 到 +120度 (240度跨度)
+        # 500 对应 0度
+        # 公式: 角度 = (pos - 500) * 0.24
+        min_angle = (min_pos - 500) * 0.24
+        max_angle = (max_pos - 500) * 0.24
+        return min_angle, max_angle
 
     def set_angle(self, servo_id, angle):
         if servo_id not in self.servo_ids:
