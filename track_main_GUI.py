@@ -28,20 +28,35 @@ class Kalman2D:
         self.kf.measurementNoiseCov = np.eye(2, dtype=np.float32) * 0.4
         self.kf.errorCovPost = np.eye(4, dtype=np.float32)
         self.initialized = False
+        self.last_estimate = None
 
     def reset(self, x, y):
         self.kf.statePost = np.array([[x], [y], [0], [0]], dtype=np.float32)
         self.initialized = True
+        self.last_estimate = (float(x), float(y))
 
     def update(self, measurement):
         if measurement is not None and not self.initialized:
             self.reset(measurement[0], measurement[1])
+        if measurement is None and not self.initialized:
+            return None
+        if measurement is None:
+            if self.last_estimate is None:
+                prediction = self.kf.predict()
+                estimate = prediction
+                self.last_estimate = (float(estimate[0]), float(estimate[1]))
+            else:
+                self.kf.statePost = np.array(
+                    [[self.last_estimate[0]], [self.last_estimate[1]], [0], [0]],
+                    dtype=np.float32,
+                )
+                estimate = self.kf.statePost
+                prediction = estimate
+            return float(estimate[0]), float(estimate[1]), float(prediction[0]), float(prediction[1])
         prediction = self.kf.predict()
-        if measurement is not None:
-            measured = np.array([[measurement[0]], [measurement[1]]], dtype=np.float32)
-            estimate = self.kf.correct(measured)
-        else:
-            estimate = prediction
+        measured = np.array([[measurement[0]], [measurement[1]]], dtype=np.float32)
+        estimate = self.kf.correct(measured)
+        self.last_estimate = (float(estimate[0]), float(estimate[1]))
         return float(estimate[0]), float(estimate[1]), float(prediction[0]), float(prediction[1])
 
 
@@ -388,7 +403,12 @@ class CircleTrackerGUI:
                     measurement = (float(detection[0]), float(detection[1]))
                     radius = int(detection[2])
 
-                filtered_x, filtered_y, pred_x, pred_y = self.kalman.update(measurement)
+                kalman_out = self.kalman.update(measurement)
+                if kalman_out is None:
+                    filtered_x, filtered_y = float(center_x), float(center_y)
+                    pred_x, pred_y = float(center_x), float(center_y)
+                else:
+                    filtered_x, filtered_y, pred_x, pred_y = kalman_out
                 target_x = filtered_x + float(s["x_bias"])
                 target_y = filtered_y + float(s["y_bias"])
 
@@ -406,6 +426,11 @@ class CircleTrackerGUI:
                     error_x = 0.0
                 if abs(error_y) < deadband:
                     error_y = 0.0
+                if not circle_found:
+                    error_x = 0.0
+                    error_y = 0.0
+                    self.pid_x.reset()
+                    self.pid_y.reset()
 
                 max_step = float(s["max_delta_deg_per_sec"]) * dt
 
