@@ -50,6 +50,7 @@ class CircleTrackerGUI:
         self.root = root
         self.root.title("Circle Tracker GUI")
         self.running = False
+        self.tracking_active = False
         self.picam2 = None
         self.servo = None
         self.worker_thread = None
@@ -60,6 +61,7 @@ class CircleTrackerGUI:
         self.worker_error = None
         self.last_exposure = None
         self.last_gain = None
+        self.last_ae_enable = None
         self.fps = 0.0
         self.after_id = None
         self.kalman = Kalman2D()
@@ -90,6 +92,7 @@ class CircleTrackerGUI:
         self.max_delta_deg_per_sec = tk.DoubleVar(value=30.0)
         self.exposure_value = tk.DoubleVar(value=0.0)
         self.analogue_gain = tk.DoubleVar(value=8.0)
+        self.ae_enable = tk.BooleanVar(value=True)
         self.ksize = tk.IntVar(value=5)
         self.min_dist = tk.IntVar(value=80)
         self.param1 = tk.IntVar(value=220)
@@ -105,6 +108,7 @@ class CircleTrackerGUI:
         self.root.bind("<Escape>", lambda _e: self.on_close())
         self.root.bind("q", lambda _e: self.on_close())
         self._update_settings_from_vars()
+        self.root.after(10, self._start_runtime)
 
     def _update_settings_from_vars(self):
         with self.settings_lock:
@@ -128,6 +132,7 @@ class CircleTrackerGUI:
                 "max_delta_deg_per_sec": float(self.max_delta_deg_per_sec.get()),
                 "exposure": float(self.exposure_value.get()),
                 "gain": float(self.analogue_gain.get()),
+                "ae_enable": bool(self.ae_enable.get()),
                 "ksize": int(self.ksize.get()),
                 "min_dist": int(self.min_dist.get()),
                 "param1": int(self.param1.get()),
@@ -259,6 +264,8 @@ class CircleTrackerGUI:
         cam.pack(fill=tk.BOTH, expand=True)
         cam.columnconfigure(0, weight=1)
         rc = 0
+        ttk.Checkbutton(cam, text="Auto Exposure", variable=self.ae_enable).grid(row=rc, column=0, sticky="w", pady=(2, 8))
+        rc += 1
         rc = self._grid_slider(cam, rc, 0, "Exposure", self.exposure_value, -8.0, 8.0)
         rc = self._grid_slider(cam, rc, 0, "Gain", self.analogue_gain, 1.0, 22.0)
 
@@ -291,85 +298,44 @@ class CircleTrackerGUI:
         var.trace_add("write", _on_change)
         return row + 1
 
-    def start(self):
+    def _start_runtime(self):
         if self.running:
             return
         try:
             self.stop_event.clear()
             self.worker_error = None
             self._update_settings_from_vars()
-            self.picam2 = Picamera2()
-            self.picam2.start_preview(Preview.NULL)
-            framerate = 30
-            frame_duration = int(1000000 / framerate)
-            config = self.picam2.create_video_configuration(
-                controls={"FrameDurationLimits": (frame_duration, frame_duration)}
-            )
-            config["main"]["format"] = "RGB888"
-            config["main"]["size"] = (640, 640)
-            self.picam2.align_configuration(config)
-            self.picam2.configure(config)
-            self.picam2.start()
-            time.sleep(0.3)
-            self.picam2.set_controls({"AeEnable": False, "AwbEnable": True})
-            self.last_exposure = None
-            self.last_gain = None
-            settings = self._get_settings()
-            self.active_pan_id = settings["pan_id"]
-            self.active_tilt_id = settings["tilt_id"]
-            self.servo = BusServo(
-                port=settings["port"],
-                baudrate=settings["baudrate"],
-                servo_num=2,
-                servo_ids=[self.active_pan_id, self.active_tilt_id],
-                moving_time=settings["move_time_ms"],
-            )
-            self.pid_x.reset()
-            self.pid_y.reset()
-            self.kalman = Kalman2D()
-            self.current_pan_angle = 0.0
-            self.current_tilt_angle = 0.0
+            self._ensure_camera()
             self.running = True
-            self.status_text.set("Tracking started")
             self.worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
             self.worker_thread.start()
-            self.after_id = self.root.after(10, self._ui_loop)
+            self.after_id = self.root.after(30, self._ui_loop)
+            self.status_text.set("Detecting (tracking off)")
         except Exception as exc:
-            self.status_text.set(f"Start failed: {exc}")
-            messagebox.showerror("Start failed", str(exc))
-            self.stop()
+            self.worker_error = str(exc)
+            self.status_text.set(f"Init failed: {exc}")
+            messagebox.showerror("Init failed", str(exc))
+
+    def start(self):
+        if not self.running:
+            self._start_runtime()
+        self.tracking_active = True
+        self.pid_x.reset()
+        self.pid_y.reset()
+        self.kalman = Kalman2D()
+        self.status_text.set("Tracking started")
 
     def stop(self):
-        self.running = False
-        self.stop_event.set()
-        if self.after_id is not None:
-            try:
-                self.root.after_cancel(self.after_id)
-            except Exception:
-                pass
-            self.after_id = None
-        if self.worker_thread is not None:
-            self.worker_thread.join(timeout=1.0)
-            self.worker_thread = None
-        if self.picam2 is not None:
-            try:
-                self.picam2.stop()
-            except Exception:
-                pass
-            self.picam2 = None
-        if self.servo is not None:
-            try:
-                self.servo.cleanup()
-            except Exception:
-                pass
-            self.servo = None
-        self.status_text.set("Stopped")
+        self.tracking_active = False
+        if self.running:
+            self.status_text.set("Detecting (tracking off)")
 
     def reset_axes(self):
         self.current_pan_angle = 0.0
         self.current_tilt_angle = 0.0
         self.pid_x.reset()
         self.pid_y.reset()
+        self.kalman = Kalman2D()
         if self.servo is not None:
             self.servo.set_angles(
                 [
@@ -387,13 +353,20 @@ class CircleTrackerGUI:
                 dt = max(loop_start - last_time, 1e-4)
                 last_time = loop_start
 
-                if self.picam2 is None or self.servo is None:
+                if self.picam2 is None:
                     time.sleep(0.01)
+                    try:
+                        self._ensure_camera()
+                    except Exception as exc:
+                        self.worker_error = str(exc)
+                        self.stop_event.set()
+                        break
                     continue
 
                 s = self._get_settings()
-                self.servo.moving_time = max(0, int(s["move_time_ms"]))
-                self._sync_camera_controls(s["exposure"], s["gain"])
+                if self.servo is not None:
+                    self.servo.moving_time = max(0, int(s["move_time_ms"]))
+                self._sync_camera_controls(s["ae_enable"], s["exposure"], s["gain"])
 
                 frame_rgb = self.picam2.capture_array()
                 h, w = frame_rgb.shape[:2]
@@ -436,19 +409,27 @@ class CircleTrackerGUI:
 
                 max_step = float(s["max_delta_deg_per_sec"]) * dt
 
-                if s["pan_enabled"]:
+                do_track = self.tracking_active
+                if do_track and self.servo is None:
+                    try:
+                        self._ensure_servo()
+                    except Exception as exc:
+                        self.worker_error = str(exc)
+                        self.stop_event.set()
+                        break
+                if do_track and s["pan_enabled"]:
                     delta_x = self.pid_x.update(error_x, dt=dt)
                     desired_pan = self.current_pan_angle + delta_x
                     step_pan = max(-max_step, min(max_step, desired_pan - self.current_pan_angle))
                     self.current_pan_angle = max(-90.0, min(90.0, self.current_pan_angle + step_pan))
 
-                if s["tilt_enabled"]:
+                if do_track and s["tilt_enabled"]:
                     delta_y = self.pid_y.update(error_y, dt=dt)
                     desired_tilt = self.current_tilt_angle + delta_y
                     step_tilt = max(-max_step, min(max_step, desired_tilt - self.current_tilt_angle))
                     self.current_tilt_angle = max(-90.0, min(90.0, self.current_tilt_angle + step_tilt))
 
-                if s["pan_enabled"] or s["tilt_enabled"]:
+                if do_track and (s["pan_enabled"] or s["tilt_enabled"]):
                     self.servo.set_angles(
                         [
                             (self.active_pan_id, self.current_pan_angle),
@@ -477,6 +458,7 @@ class CircleTrackerGUI:
                     (self.current_pan_angle, self.current_tilt_angle),
                     circle_found,
                     radius,
+                    do_track,
                 )
                 try:
                     if self.frame_queue.full():
@@ -498,11 +480,12 @@ class CircleTrackerGUI:
 
     def _ui_loop(self):
         if not self.running:
+            self.after_id = self.root.after(100, self._ui_loop)
             return
         self._update_settings_from_vars()
         if self.worker_error is not None:
             self.status_text.set(f"Worker error: {self.worker_error}")
-            self.stop()
+            self.after_id = self.root.after(200, self._ui_loop)
             return
         latest = None
         try:
@@ -512,7 +495,7 @@ class CircleTrackerGUI:
             pass
 
         if latest is not None:
-            frame_rgb_show, dt, (error_x, error_y), (pan, tilt), circle_found, radius = latest
+            frame_rgb_show, dt, (error_x, error_y), (pan, tilt), circle_found, radius, do_track = latest
             image = Image.fromarray(frame_rgb_show)
             photo = ImageTk.PhotoImage(image=image)
             self.preview_label.configure(image=photo)
@@ -520,17 +503,53 @@ class CircleTrackerGUI:
             if dt > 0:
                 self.fps = 1.0 / dt
             self.status_text.set(
-                f"FPS={self.fps:.1f}  pan={pan:.2f}  tilt={tilt:.2f}  ex={error_x:.1f}  ey={error_y:.1f}  circle={int(circle_found)} r={radius}"
+                f"FPS={self.fps:.1f}  pan={pan:.2f}  tilt={tilt:.2f}  ex={error_x:.1f}  ey={error_y:.1f}  circle={int(circle_found)} r={radius}  track={int(do_track)}"
             )
 
         self.after_id = self.root.after(30, self._ui_loop)
 
-    def _sync_camera_controls(self, exposure, gain):
-        if self.last_exposure == exposure and self.last_gain == gain:
+    def _sync_camera_controls(self, ae_enable, exposure, gain):
+        if self.last_ae_enable == ae_enable and self.last_exposure == exposure and self.last_gain == gain:
             return
-        self.picam2.set_controls({"ExposureValue": exposure, "AnalogueGain": gain})
+        self.picam2.set_controls({"AeEnable": bool(ae_enable), "AwbEnable": True})
+        self.picam2.set_controls({"ExposureValue": float(exposure), "AnalogueGain": float(gain)})
+        self.last_ae_enable = ae_enable
         self.last_exposure = exposure
         self.last_gain = gain
+
+    def _ensure_camera(self):
+        if self.picam2 is not None:
+            return
+        self.picam2 = Picamera2()
+        self.picam2.start_preview(Preview.NULL)
+        framerate = 30
+        frame_duration = int(1000000 / framerate)
+        config = self.picam2.create_video_configuration(
+            controls={"FrameDurationLimits": (frame_duration, frame_duration)}
+        )
+        config["main"]["format"] = "RGB888"
+        config["main"]["size"] = (640, 640)
+        self.picam2.align_configuration(config)
+        self.picam2.configure(config)
+        self.picam2.start()
+        time.sleep(0.2)
+        self.last_ae_enable = None
+        self.last_exposure = None
+        self.last_gain = None
+
+    def _ensure_servo(self):
+        if self.servo is not None:
+            return
+        settings = self._get_settings()
+        self.active_pan_id = settings["pan_id"]
+        self.active_tilt_id = settings["tilt_id"]
+        self.servo = BusServo(
+            port=settings["port"],
+            baudrate=settings["baudrate"],
+            servo_num=2,
+            servo_ids=[self.active_pan_id, self.active_tilt_id],
+            moving_time=settings["move_time_ms"],
+        )
 
     def _detect_circle(self, frame_rgb, *, ksize, min_dist, param1, param2, min_radius, max_radius):
         h, w = frame_rgb.shape[:2]
@@ -583,12 +602,43 @@ class CircleTrackerGUI:
         cv2.putText(frame, f"dt={dt:.3f}s", (10, 72), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
 
     def on_close(self):
-        self.stop()
+        self.tracking_active = False
+        self.stop_event.set()
+        if self.after_id is not None:
+            try:
+                self.root.after_cancel(self.after_id)
+            except Exception:
+                pass
+            self.after_id = None
+        if self.worker_thread is not None:
+            self.worker_thread.join(timeout=2.0)
+            self.worker_thread = None
+        if self.picam2 is not None:
+            try:
+                self.picam2.stop()
+            except Exception:
+                pass
+            try:
+                self.picam2.close()
+            except Exception:
+                pass
+            self.picam2 = None
+        if self.servo is not None:
+            try:
+                self.servo.cleanup()
+            except Exception:
+                pass
+            self.servo = None
         self.root.destroy()
 
     def _jog(self, delta_pan, delta_tilt):
         if self.servo is None:
-            return
+            try:
+                self._ensure_servo()
+            except Exception as exc:
+                self.worker_error = str(exc)
+                self.status_text.set(f"Servo error: {exc}")
+                return
         self.current_pan_angle = float(self.current_pan_angle) + float(delta_pan)
         self.current_tilt_angle = float(self.current_tilt_angle) + float(delta_tilt)
         self.servo.set_angles(
