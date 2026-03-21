@@ -176,6 +176,13 @@ class CircleTrackerGUI:
         self.root.bind("<Escape>", lambda _e: self.on_close())
         self.root.bind("q", lambda _e: self.on_close())
         self._update_settings_from_vars()
+        
+        # 尝试提前初始化舵机并在GUI显示前立即回正
+        try:
+            self._ensure_servo()
+        except Exception as exc:
+            print(f"[WARNING] Servo init failed before GUI start: {exc}")
+            
         self.root.after(10, self._start_runtime)
 
     def _update_settings_from_vars(self):
@@ -777,10 +784,6 @@ class CircleTrackerGUI:
             self._update_settings_from_vars()
             self._ensure_camera()
             self.running = True
-            
-            # 进入 GUI 并启动运行时，如果连接了舵机，立即回正
-            if self.servo is not None:
-                self._center_servos()
             
             self.worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
             self.worker_thread.start()
@@ -1490,6 +1493,16 @@ class CircleTrackerGUI:
         self._save_settings()
         self.stop_event.set()
         self.detect_stop_event.set()
+        
+        # 退出 GUI 前强制回正舵机
+        if self.servo is not None:
+            try:
+                print("[INFO] Exiting GUI. Centering servos before shutdown...")
+                self._center_servos()
+                time.sleep(0.5) # 给舵机一点时间移动到位
+            except Exception:
+                pass
+                
         if self.after_id is not None:
             try:
                 self.root.after_cancel(self.after_id)
