@@ -1188,10 +1188,18 @@ class CircleTrackerGUI:
                     bin_resized = cv2.resize(binary, (orig_w, orig_h))
                     if roi_h > 0 and roi_w > 0:
                         full_bin[offset_y:end_y, offset_x:end_x, 0] = bin_resized[:roi_h, :roi_w]
-                    cv2.putText(full_bin, "Laser Binary Mask", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+                    
+                    if laser_locked:
+                        cv2.putText(full_bin, "Laser Binary Mask [LOCKED]", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                        # 同时在原图上也写上锁定状态
+                        cv2.putText(frame_rgb_disp, "Laser: LOCKED", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                    else:
+                        cv2.putText(full_bin, "Laser Binary Mask [SEARCHING]", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 165, 0), 2)
+                        cv2.putText(frame_rgb_disp, "Laser: SEARCHING", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 165, 0), 2)
                 else:
                     full_bin = np.zeros_like(frame_rgb_disp)
                     cv2.putText(full_bin, "Laser Binary (Disabled)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (128, 128, 128), 2)
+                    cv2.putText(frame_rgb_disp, "Laser: BLIND ALIGN", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (128, 128, 128), 2)
                 
                 top_row = np.hstack((frame_rgb_disp, full_green))
                 bottom_row = np.hstack((full_red, full_bin))
