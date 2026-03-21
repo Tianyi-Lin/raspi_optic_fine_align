@@ -183,17 +183,7 @@ class CircleTrackerGUI:
         self.root.bind("q", lambda _e: self.on_close())
         self._update_settings_from_vars()
         
-        # 尝试提前初始化舵机并在GUI显示前立即回正
-        try:
-            self._ensure_servo()
-        except Exception as exc:
-            print(f"[WARNING] Servo init failed before GUI start: {exc}")
-            
-        # 增加 100ms 延时，让舵机初始化、读取边界、回正指令彻底完成
-        # 避免与激光测距模块初始化产生串口通信干扰
-        time.sleep(0.1)
-            
-        # 强制配置激光测距模块为查询模式 (Passive / Inquire)
+        # 1. 强制配置激光测距模块为查询模式 (Passive / Inquire)
         configure_laser_module(
             port="/dev/ttyAMA2", 
             baudrate=115200, 
@@ -203,8 +193,22 @@ class CircleTrackerGUI:
             interface_mode="uart",
             uart_baudrate=115200
         )
+        
+        # 释放激光配置串口后，硬延时 1 秒，等待系统资源完全释放和稳定
+        print("[INFO] Laser configured. Waiting 1.0s before initializing servos...")
+        time.sleep(1.0)
+        
+        # 2. 尝试提前初始化舵机并在GUI显示前立即回正
+        try:
+            self._ensure_servo()
+        except Exception as exc:
+            print(f"[WARNING] Servo init failed before GUI start: {exc}")
             
-        # 初始化激光测距模块 (被动查询模式)
+        # 舵机回正指令发送后，硬延时 1 秒，等待舵机机械运动到位及总线电平恢复
+        print("[INFO] Servos centered. Waiting 1.0s before attaching laser monitor...")
+        time.sleep(1.0)
+            
+        # 3. 初始化激光测距模块 (被动查询模式)
         # 注意：这里不再调用 start() 开启后台死循环，而是由主循环按需调用 query_once()
         try:
             self.laser_ranger = LaserRangerQueryMonitor(port="/dev/ttyAMA2", baudrate=115200, module_id=0, history_len=10)
