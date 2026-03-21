@@ -161,6 +161,9 @@ class CircleTrackerGUI:
         self.fps_ctrl = 0.0
         self.last_cam_frame_id = 0
         self.last_cam_time = 0.0
+        
+        # 记录激光是否已经进入圆形标志物内部的状态
+        self.laser_locked_in_circle = False
 
         # 用于平滑检测结果的EMA（指数移动平均）状态
         self.smoothed_detection = None
@@ -867,9 +870,10 @@ class CircleTrackerGUI:
                 laser_found = False
                 laser_binary_display = None # 用于保存要显示的二值化图像
                 
+                # 判断当前是否满足指示对准的前提条件：
+                # 1. 勾选了启用激光对准模式
+                # 2. 必须先找到了圆形标志物 (circle_found) 才能谈“进入圆环内部”
                 if s.get("laser_align_mode", False) and green_data is not None:
-                    # 【指示对准模式】尝试寻找激光光斑
-                    # 注意：现在我们在红色通道 (blurred_red) 中找激光
                     blurred_green, blurred_red, offset_x, offset_y, scale = green_data
                     _, binary = cv2.threshold(blurred_red, s.get("laser_threshold", 240), 255, cv2.THRESH_BINARY)
                     laser_binary_display = binary # 保存二值化结果
@@ -877,27 +881,38 @@ class CircleTrackerGUI:
                     num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary, connectivity=8)
                     
                     if num_labels > 1:
-                        # 找到了激光光斑（在 ROI 内）
-                        laser_found = True
+                        # 找到了候选激光光斑
                         largest_label = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
                         cx, cy = centroids[largest_label]
                         
-                        # 转换回全图坐标（加上 ROI 的 offset）
+                        # 转换回全图坐标
                         laser_x = (cx / scale) + offset_x
                         laser_y = (cy / scale) + offset_y
                         laser_spot_display = (laser_x, laser_y)
                         
-                        # 在指示模式下发现光斑：直接使用光斑坐标对比真实圆心计算误差。
-                        # 此时抛弃 bias（因为已经在看真实落点了）
-                        error_x = laser_x - target_x
-                        error_y = laser_y - target_y
+                        if circle_found:
+                            # 计算光斑到目标圆心的距离
+                            dist_to_center = math.hypot(laser_x - target_x, laser_y - target_y)
+                            
+                            # 只有当光斑距离圆心小于圆的半径时，才认为“进入了圆形标志物内部”
+                            if dist_to_center <= radius:
+                                self.laser_locked_in_circle = True
+                            else:
+                                # 如果跑出了圆环，且距离过大（可以加个阈值防抖，这里简单处理一旦出圆就取消锁定）
+                                # 为了防止在边缘频繁跳变，这里设定：如果超出半径 1.5 倍，则解除锁定，回退到盲对准。
+                                if dist_to_center > radius * 1.5:
+                                    self.laser_locked_in_circle = False
+                        
+                        # 如果当前处于锁定状态（光斑在圆内，或者刚才在圆内还没跑太远），则激活真正的指示对准
+                        if self.laser_locked_in_circle:
+                            laser_found = True
+                            # 在指示模式下：直接使用光斑坐标对比真实圆心计算误差。抛弃 bias。
+                            error_x = laser_x - target_x
+                            error_y = laser_y - target_y
 
-                # 如果没有开启指示对准，或者开启了但【没找到光斑】
+                # 如果没有开启指示对准，或者开启了但【没找到光斑】或【光斑还未进入圆环内部】
                 if not laser_found:
-                    # 【盲对准模式 / 回退模式】
-                    # 将目标圆心 (target_x, target_y) 加上一个手动测量的补偿值 (x_bias, y_bias)，
-                    # 这个补偿值代表了【相机中心光轴】与【激光器光轴】之间的物理安装视差。
-                    # 然后让相机中心去对准这个加了偏置的虚拟圆心。
+                    # 此时必须使用盲对准逻辑（即使画面上有光斑，只要没进圆，依然由相机中心+bias来控制）
                     target_x += float(s["x_bias"])
                     target_y += float(s["y_bias"])
                     
@@ -1082,6 +1097,7 @@ class CircleTrackerGUI:
                     circle_found,
                     radius,
                     do_track,
+                    self.laser_locked_in_circle,
                 )
                 try:
                     if self.frame_queue.full():
@@ -1174,7 +1190,7 @@ class CircleTrackerGUI:
             pass
 
         if latest is not None:
-            frame_rgb_show, dt, (error_x, error_y), (pan, tilt), circle_found, radius, do_track = latest
+            frame_rgb_show, dt, (error_x, error_y), (pan, tilt), circle_found, radius, do_track, laser_locked = latest
             image = Image.fromarray(frame_rgb_show)
             photo = ImageTk.PhotoImage(image=image)
             self.preview_label.configure(image=photo)
@@ -1193,9 +1209,15 @@ class CircleTrackerGUI:
 
             if dt > 0:
                 self.fps_ctrl = 1.0 / dt
-            self.status_text.set(
-                f"相机FPS={self.fps_cam:.1f}  控制Hz={self.fps_ctrl:.1f}  水平={pan:.2f}  俯仰={tilt:.2f}  误差X={error_x:.1f}  误差Y={error_y:.1f}  圆={int(circle_found)}  半径={radius}  跟踪={int(do_track)}"
-            )
+                
+            status_msg = f"相机FPS={self.fps_cam:.1f}  控制Hz={self.fps_ctrl:.1f}  水平={pan:.2f}  俯仰={tilt:.2f}  误差X={error_x:.1f}  误差Y={error_y:.1f}  圆={int(circle_found)}  半径={radius}  跟踪={int(do_track)}"
+            if self.laser_align_mode.get():
+                if laser_locked:
+                    status_msg += "  [指示对准: 已锁定光斑]"
+                else:
+                    status_msg += "  [盲对准: 寻找光斑中...]"
+                    
+            self.status_text.set(status_msg)
             
             # 检测并更新FPS与曝光冲突警告
             target_fps = self.camera_fps.get()
