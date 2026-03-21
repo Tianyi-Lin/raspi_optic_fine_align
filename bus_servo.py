@@ -79,10 +79,11 @@ class BusServo:
         for servo_id, angle in angles:
             self.set_angle(servo_id, angle)
 
-    def move_angle(self):
+    def move_angle(self, wait=True):
         for servo_id, angle_index in self.servo_angles_setting:
             self.driver.move_time_write(servo_id, int(angle_index), self.moving_time)
-        time.sleep(self.moving_time / 1000.0)
+        if wait:
+            time.sleep(self.moving_time / 1000.0)
 
     def read_servos_angle(self):
         for i, servo_id in enumerate(self.servo_ids):

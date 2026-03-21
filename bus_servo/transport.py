@@ -1,4 +1,7 @@
-import serial
+try:
+    import serial
+except ModuleNotFoundError:
+    serial = None
 
 
 class SerialTransport:
@@ -9,6 +12,8 @@ class SerialTransport:
     """
 
     def __init__(self, port: str, baudrate: int = 115200, timeout: float = 0.1):
+        if serial is None:
+            raise ModuleNotFoundError("pyserial is required: pip install pyserial")
         self.ser = serial.Serial(
             port=port,
             baudrate=baudrate,
