@@ -1139,7 +1139,7 @@ class CircleTrackerGUI:
                     y1 = min(h, int(last_det[1] + margin))
                     if x1 - x0 >= 20 and y1 - y0 >= 20:
                         roi = (x0, y0, x1, y1)
-                detection, blurred_green, offset_x, offset_y, scale = self._detect_circle(
+                detection, blurred_green, blurred_red, offset_x, offset_y, scale = self._detect_circle(
                     frame_rgb,
                     ksize=s["ksize"],
                     min_dist=s["min_dist"],
@@ -1167,7 +1167,7 @@ class CircleTrackerGUI:
                 with self.detect_lock:
                     self.latest_detection = detection_to_save
                     self.latest_detection_time = time.time()
-                    self.latest_green_channel = (blurred_green, offset_x, offset_y, scale)
+                    self.latest_green_channel = (blurred_green, blurred_red, offset_x, offset_y, scale)
                     last_processed_id = frame_id
         except Exception as exc:
             self.worker_error = str(exc)
