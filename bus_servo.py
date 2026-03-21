@@ -30,16 +30,15 @@ class BusServo:
         self.driver = BusServoDriver(self.transport)
         self.servo_angles_setting = [[sid, 500] for sid in self.servo_ids]
         self.servo_angles_reading = [[sid, 500] for sid in self.servo_ids]
-        self.pan_min_angle = -12.0
-        self.pan_max_angle = 12.0
-        self.pan_min_angle_index = 450
-        self.pan_max_angle_index = 550
-        self.tilt_min_angle = -12.0
-        self.tilt_max_angle = 12.0
-        self.tilt_min_angle_index = 450
-        self.tilt_max_angle_index = 550
-        self.pan_bound_flag = False
-        self.tilt_bound_flag = False
+        # 角度限制由上层(GUI)控制，这里只保留映射关系，不限制范围
+        self.pan_min_angle = -90.0
+        self.pan_max_angle = 90.0
+        self.pan_min_angle_index = 0
+        self.pan_max_angle_index = 1000
+        self.tilt_min_angle = -90.0
+        self.tilt_max_angle = 90.0
+        self.tilt_min_angle_index = 0
+        self.tilt_max_angle_index = 1000
         self.angle_equal_threshold = 2
         self.reset()
 
@@ -48,8 +47,6 @@ class BusServo:
             return None
         angle = float(angle)
         if servo_id == 1:
-            self.pan_bound_flag = False
-            angle = self._clip_pan(angle)
             angle_index = self.map(
                 angle,
                 self.pan_min_angle,
@@ -58,10 +55,8 @@ class BusServo:
                 self.pan_max_angle_index,
             )
             self._update_setting(servo_id, angle_index)
-            return self.pan_bound_flag
+            return False
         if servo_id == 2:
-            self.tilt_bound_flag = False
-            angle = self._clip_tilt(angle)
             angle_index = self.map(
                 angle,
                 self.tilt_min_angle,
@@ -70,7 +65,7 @@ class BusServo:
                 self.tilt_max_angle_index,
             )
             self._update_setting(servo_id, angle_index)
-            return self.tilt_bound_flag
+            return False
         angle_index = max(0, min(1000, int(round(angle))))
         self._update_setting(servo_id, angle_index)
         return False
@@ -118,21 +113,3 @@ class BusServo:
                 self.servo_angles_setting[i][1] = int(angle_index)
                 return
         self.servo_angles_setting.append([servo_id, int(angle_index)])
-
-    def _clip_pan(self, angle):
-        if angle > self.pan_max_angle:
-            self.pan_bound_flag = True
-            return self.pan_max_angle
-        if angle < self.pan_min_angle:
-            self.pan_bound_flag = True
-            return self.pan_min_angle
-        return angle
-
-    def _clip_tilt(self, angle):
-        if angle > self.tilt_max_angle:
-            self.tilt_bound_flag = True
-            return self.tilt_max_angle
-        if angle < self.tilt_min_angle:
-            self.tilt_bound_flag = True
-            return self.tilt_min_angle
-        return angle
