@@ -14,6 +14,7 @@ from picamera2 import Picamera2, Preview
 
 from PID import PID
 from bus_servo import BusServo
+from laser_ranger import LaserRangerMonitor
 
 
 class Kalman2D:
@@ -78,6 +79,7 @@ class CircleTrackerGUI:
         self.tracking_active = False
         self.picam2 = None
         self.servo = None
+        self.laser_ranger = None  # 激光测距模块
         self.worker_thread = None
         self.detect_thread = None
         self.stop_event = threading.Event()
@@ -182,6 +184,13 @@ class CircleTrackerGUI:
             self._ensure_servo()
         except Exception as exc:
             print(f"[WARNING] Servo init failed before GUI start: {exc}")
+            
+        # 初始化激光测距模块
+        try:
+            self.laser_ranger = LaserRangerMonitor(port="/dev/ttyAMA2", baudrate=115200, history_len=10)
+            self.laser_ranger.start()
+        except Exception as exc:
+            print(f"[WARNING] Laser Ranger init failed: {exc}")
             
         self.root.after(10, self._start_runtime)
 
@@ -1028,6 +1037,13 @@ class CircleTrackerGUI:
                     )
                     self.servo.move_angle(wait=False)
 
+                # 获取当前激光测距数据 (如果在死区内)
+                current_distance = -1.0
+                if self.laser_ranger is not None and abs(error_x) <= deadband and abs(error_y) <= deadband and circle_found:
+                    # 获取最新距离数据 (m 转换为 mm)
+                    if len(self.laser_ranger.distance_m_data) > 0:
+                        current_distance = self.laser_ranger.distance_m_data[-1] * 1000.0
+
                 # 创建双屏显示的原始数据，转移到 UI 线程去拼接
                 # 这里只发送原始数据给 UI 线程，彻底解放控制线程的耗时
                 payload = (
@@ -1046,7 +1062,8 @@ class CircleTrackerGUI:
                     laser_spot_display,
                     (pan_at_min, pan_at_max, tilt_at_min, tilt_at_max),
                     s.get("laser_threshold", 240),
-                    deadband
+                    deadband,
+                    current_distance
                 )
                 try:
                     if self.frame_queue.full():
@@ -1155,7 +1172,8 @@ class CircleTrackerGUI:
                 laser_spot_display,
                 bounds,
                 laser_threshold,
-                deadband
+                deadband,
+                current_distance
             ) = latest
             
             h, w = frame_rgb.shape[:2]
@@ -1236,6 +1254,8 @@ class CircleTrackerGUI:
                 # 检查是否进入死区 (对准完成)
                 if abs(error_x) <= deadband and abs(error_y) <= deadband and circle_found:
                     cv2.putText(frame_rgb_disp, "ALIGNMENT COMPLETE (IN DEADBAND)", (10, h - 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+                    if current_distance > 0:
+                        cv2.putText(frame_rgb_disp, f"Distance: {current_distance:.1f} mm", (10, h - 70), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
                 
                 top_row = np.hstack((frame_rgb_disp, full_green))
                 bottom_row = np.hstack((full_red, full_bin))
@@ -1531,6 +1551,12 @@ class CircleTrackerGUI:
             except Exception:
                 pass
             self.servo = None
+        if self.laser_ranger is not None:
+            try:
+                self.laser_ranger.stop()
+            except Exception:
+                pass
+            self.laser_ranger = None
         self.root.destroy()
 
     def _jog(self, delta_pan, delta_tilt):
