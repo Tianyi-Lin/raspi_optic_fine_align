@@ -1,5 +1,6 @@
 import time
 import os
+import json
 import threading
 import queue
 import tkinter as tk
@@ -64,7 +65,7 @@ class Kalman2D:
 class CircleTrackerGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("Circle Tracker GUI")
+        self.root.title("圆形追踪器")
         cv2.setUseOptimized(True)
         cpu_count = os.cpu_count() or 1
         cv2.setNumThreads(max(1, cpu_count - 1))
@@ -123,13 +124,14 @@ class CircleTrackerGUI:
         self.max_radius = tk.IntVar(value=120)
         self.x_bias = tk.IntVar(value=0)
         self.y_bias = tk.IntVar(value=0)
-        self.status_text = tk.StringVar(value="Ready")
+        self.status_text = tk.StringVar(value="就绪")
         self.latest_frame = None
         self.latest_frame_id = 0
         self.latest_detection = None
         self.latest_detection_time = 0.0
         self.detect_stale_sec = 0.3
 
+        self._load_settings()
         self._build_ui()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.root.bind("<Escape>", lambda _e: self.on_close())
@@ -174,6 +176,100 @@ class CircleTrackerGUI:
         with self.settings_lock:
             return dict(self.settings)
 
+    def _settings_path(self):
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        return os.path.join(base_dir, "tracker_settings.txt")
+
+    def _load_settings(self):
+        path = self._settings_path()
+        if not os.path.exists(path):
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            return
+        var_map = {
+            "port": self.port,
+            "baudrate": self.baudrate,
+            "pan_id": self.pan_id,
+            "tilt_id": self.tilt_id,
+            "move_time_ms": self.move_time_ms,
+            "control_period_ms": self.control_period_ms,
+            "track_enabled": self.track_enabled,
+            "pan_enabled": self.pan_enabled,
+            "tilt_enabled": self.tilt_enabled,
+            "kp_x": self.kp_x,
+            "ki_x": self.ki_x,
+            "kd_x": self.kd_x,
+            "kp_y": self.kp_y,
+            "ki_y": self.ki_y,
+            "kd_y": self.kd_y,
+            "deadband": self.error_deadband,
+            "max_delta_deg_per_sec": self.max_delta_deg_per_sec,
+            "exposure": self.exposure_value,
+            "gain": self.analogue_gain,
+            "ae_enable": self.ae_enable,
+            "ksize": self.ksize,
+            "min_dist": self.min_dist,
+            "param1": self.param1,
+            "param2": self.param2,
+            "min_radius": self.min_radius,
+            "max_radius": self.max_radius,
+            "x_bias": self.x_bias,
+            "y_bias": self.y_bias,
+        }
+        for key, var in var_map.items():
+            if key not in data:
+                continue
+            value = data[key]
+            if isinstance(var, tk.BooleanVar):
+                var.set(bool(value))
+            elif isinstance(var, tk.IntVar):
+                var.set(int(value))
+            elif isinstance(var, tk.DoubleVar):
+                var.set(float(value))
+            else:
+                var.set(value)
+
+    def _save_settings(self):
+        path = self._settings_path()
+        data = {
+            "port": self.port.get(),
+            "baudrate": int(self.baudrate.get()),
+            "pan_id": int(self.pan_id.get()),
+            "tilt_id": int(self.tilt_id.get()),
+            "move_time_ms": int(self.move_time_ms.get()),
+            "control_period_ms": int(self.control_period_ms.get()),
+            "track_enabled": bool(self.track_enabled.get()),
+            "pan_enabled": bool(self.pan_enabled.get()),
+            "tilt_enabled": bool(self.tilt_enabled.get()),
+            "kp_x": float(self.kp_x.get()),
+            "ki_x": float(self.ki_x.get()),
+            "kd_x": float(self.kd_x.get()),
+            "kp_y": float(self.kp_y.get()),
+            "ki_y": float(self.ki_y.get()),
+            "kd_y": float(self.kd_y.get()),
+            "deadband": float(self.error_deadband.get()),
+            "max_delta_deg_per_sec": float(self.max_delta_deg_per_sec.get()),
+            "exposure": float(self.exposure_value.get()),
+            "gain": float(self.analogue_gain.get()),
+            "ae_enable": bool(self.ae_enable.get()),
+            "ksize": int(self.ksize.get()),
+            "min_dist": int(self.min_dist.get()),
+            "param1": int(self.param1.get()),
+            "param2": int(self.param2.get()),
+            "min_radius": int(self.min_radius.get()),
+            "max_radius": int(self.max_radius.get()),
+            "x_bias": int(self.x_bias.get()),
+            "y_bias": int(self.y_bias.get()),
+        }
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
     def _build_ui(self):
         main = ttk.Frame(self.root, padding=8)
         main.pack(fill=tk.BOTH, expand=True)
@@ -196,28 +292,28 @@ class CircleTrackerGUI:
         tab_pid = ttk.Frame(notebook, padding=8)
         tab_vision = ttk.Frame(notebook, padding=8)
         tab_camera = ttk.Frame(notebook, padding=8)
-        notebook.add(tab_basic, text="Basic")
+        notebook.add(tab_basic, text="基本")
         notebook.add(tab_pid, text="PID")
-        notebook.add(tab_vision, text="Vision")
-        notebook.add(tab_camera, text="Camera")
+        notebook.add(tab_vision, text="视觉")
+        notebook.add(tab_camera, text="相机")
 
         tab_basic.columnconfigure(1, weight=1)
         tab_basic.columnconfigure(3, weight=1)
         r = 0
         self._grid_entry(tab_basic, r, 0, "串口", self.port, width=18)
-        self._grid_entry(tab_basic, r, 2, "Move ms", self.move_time_ms, width=8)
+        self._grid_entry(tab_basic, r, 2, "移动时间ms", self.move_time_ms, width=8)
         r += 1
-        self._grid_entry(tab_basic, r, 0, "Baud", self.baudrate, width=10)
+        self._grid_entry(tab_basic, r, 0, "波特率", self.baudrate, width=10)
         r += 1
-        self._grid_entry(tab_basic, r, 0, "Pan ID", self.pan_id, width=8)
-        self._grid_entry(tab_basic, r, 2, "Tilt ID", self.tilt_id, width=8)
+        self._grid_entry(tab_basic, r, 0, "水平ID", self.pan_id, width=8)
+        self._grid_entry(tab_basic, r, 2, "俯仰ID", self.tilt_id, width=8)
         r += 1
-        self._grid_entry(tab_basic, r, 0, "Ctrl ms", self.control_period_ms, width=8)
-        self._grid_entry(tab_basic, r, 2, "Jog deg", self.jog_step_deg, width=8)
+        self._grid_entry(tab_basic, r, 0, "控制周期ms", self.control_period_ms, width=8)
+        self._grid_entry(tab_basic, r, 2, "点动角度", self.jog_step_deg, width=8)
         r += 1
-        ttk.Checkbutton(tab_basic, text="Enable Track", variable=self.track_enabled).grid(row=r, column=0, sticky="w", pady=(6, 0))
-        ttk.Checkbutton(tab_basic, text="Enable Pan", variable=self.pan_enabled).grid(row=r, column=1, sticky="w", pady=(6, 0))
-        ttk.Checkbutton(tab_basic, text="Enable Tilt", variable=self.tilt_enabled).grid(row=r, column=2, sticky="w", pady=(6, 0))
+        ttk.Checkbutton(tab_basic, text="启用跟踪", variable=self.track_enabled).grid(row=r, column=0, sticky="w", pady=(6, 0))
+        ttk.Checkbutton(tab_basic, text="启用水平", variable=self.pan_enabled).grid(row=r, column=1, sticky="w", pady=(6, 0))
+        ttk.Checkbutton(tab_basic, text="启用俯仰", variable=self.tilt_enabled).grid(row=r, column=2, sticky="w", pady=(6, 0))
         r += 1
         btns = ttk.Frame(tab_basic)
         btns.grid(row=r, column=0, columnspan=4, sticky="ew", pady=(10, 0))
@@ -225,26 +321,26 @@ class CircleTrackerGUI:
         btns.columnconfigure(1, weight=1)
         btns.columnconfigure(2, weight=1)
         btns.columnconfigure(3, weight=1)
-        ttk.Button(btns, text="Start", command=self.start).grid(row=0, column=0, sticky="ew")
-        ttk.Button(btns, text="Stop", command=self.stop).grid(row=0, column=1, sticky="ew", padx=(6, 0))
-        ttk.Button(btns, text="Reset", command=self.reset_axes).grid(row=0, column=2, sticky="ew", padx=(6, 0))
-        ttk.Button(btns, text="Exit", command=self.on_close).grid(row=0, column=3, sticky="ew", padx=(6, 0))
+        ttk.Button(btns, text="开始", command=self.start).grid(row=0, column=0, sticky="ew")
+        ttk.Button(btns, text="停止", command=self.stop).grid(row=0, column=1, sticky="ew", padx=(6, 0))
+        ttk.Button(btns, text="复位", command=self.reset_axes).grid(row=0, column=2, sticky="ew", padx=(6, 0))
+        ttk.Button(btns, text="退出", command=self.on_close).grid(row=0, column=3, sticky="ew", padx=(6, 0))
 
-        jog = ttk.LabelFrame(tab_basic, text="Jog", padding=8)
+        jog = ttk.LabelFrame(tab_basic, text="点动", padding=8)
         jog.grid(row=r + 1, column=0, columnspan=4, sticky="ew", pady=(10, 0))
         for c in range(3):
             jog.columnconfigure(c, weight=1)
-        ttk.Button(jog, text="Up", command=lambda: self._jog(0.0, +self.jog_step_deg.get())).grid(row=0, column=1, sticky="ew")
-        ttk.Button(jog, text="Left", command=lambda: self._jog(-self.jog_step_deg.get(), 0.0)).grid(row=1, column=0, sticky="ew", pady=(6, 0))
-        ttk.Button(jog, text="Down", command=lambda: self._jog(0.0, -self.jog_step_deg.get())).grid(row=1, column=1, sticky="ew", pady=(6, 0))
-        ttk.Button(jog, text="Right", command=lambda: self._jog(+self.jog_step_deg.get(), 0.0)).grid(row=1, column=2, sticky="ew", pady=(6, 0))
+        ttk.Button(jog, text="上", command=lambda: self._jog(0.0, +self.jog_step_deg.get())).grid(row=0, column=1, sticky="ew")
+        ttk.Button(jog, text="左", command=lambda: self._jog(-self.jog_step_deg.get(), 0.0)).grid(row=1, column=0, sticky="ew", pady=(6, 0))
+        ttk.Button(jog, text="下", command=lambda: self._jog(0.0, -self.jog_step_deg.get())).grid(row=1, column=1, sticky="ew", pady=(6, 0))
+        ttk.Button(jog, text="右", command=lambda: self._jog(+self.jog_step_deg.get(), 0.0)).grid(row=1, column=2, sticky="ew", pady=(6, 0))
 
         pid_cols = ttk.Frame(tab_pid)
         pid_cols.pack(fill=tk.BOTH, expand=True)
         pid_cols.columnconfigure(0, weight=1)
         pid_cols.columnconfigure(1, weight=1)
-        pid_x_frame = ttk.LabelFrame(pid_cols, text="X Axis", padding=8)
-        pid_y_frame = ttk.LabelFrame(pid_cols, text="Y Axis", padding=8)
+        pid_x_frame = ttk.LabelFrame(pid_cols, text="X轴", padding=8)
+        pid_y_frame = ttk.LabelFrame(pid_cols, text="Y轴", padding=8)
         pid_x_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
         pid_y_frame.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
         for c in range(2):
@@ -258,43 +354,43 @@ class CircleTrackerGUI:
         row_y = self._grid_slider(pid_y_frame, row_y, 0, "kP", self.kp_y, 0.0, 0.1)
         row_y = self._grid_slider(pid_y_frame, row_y, 0, "kI", self.ki_y, 0.0, 0.2)
         row_y = self._grid_slider(pid_y_frame, row_y, 0, "kD", self.kd_y, 0.0, 0.02)
-        common = ttk.LabelFrame(tab_pid, text="Common", padding=8)
+        common = ttk.LabelFrame(tab_pid, text="通用", padding=8)
         common.pack(fill=tk.X, pady=(10, 0))
         common.columnconfigure(0, weight=1)
         common.columnconfigure(1, weight=1)
         r2 = 0
-        r2 = self._grid_slider(common, r2, 0, "Deadband", self.error_deadband, 0.0, 30.0)
-        r2 = self._grid_slider(common, r2, 0, "MaxDeg/s", self.max_delta_deg_per_sec, 1.0, 200.0)
+        r2 = self._grid_slider(common, r2, 0, "死区", self.error_deadband, 0.0, 30.0)
+        r2 = self._grid_slider(common, r2, 0, "最大角速度", self.max_delta_deg_per_sec, 1.0, 200.0)
 
         tab_vision.columnconfigure(0, weight=1)
         tab_vision.columnconfigure(1, weight=1)
-        left_vis = ttk.LabelFrame(tab_vision, text="Hough", padding=8)
-        right_vis = ttk.LabelFrame(tab_vision, text="Bias/Blur", padding=8)
+        left_vis = ttk.LabelFrame(tab_vision, text="霍夫", padding=8)
+        right_vis = ttk.LabelFrame(tab_vision, text="偏置/模糊", padding=8)
         left_vis.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
         right_vis.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
         for c in range(2):
             left_vis.columnconfigure(c, weight=1)
             right_vis.columnconfigure(c, weight=1)
         rv = 0
-        rv = self._grid_slider(left_vis, rv, 0, "MinDist", self.min_dist, 10, 300)
-        rv = self._grid_slider(left_vis, rv, 0, "Param1", self.param1, 50, 500)
-        rv = self._grid_slider(left_vis, rv, 0, "Param2", self.param2, 5, 200)
-        rv = self._grid_slider(left_vis, rv, 0, "MinRadius", self.min_radius, 1, 300)
-        rv = self._grid_slider(left_vis, rv, 0, "MaxRadius", self.max_radius, 1, 300)
+        rv = self._grid_slider(left_vis, rv, 0, "最小间距", self.min_dist, 10, 300)
+        rv = self._grid_slider(left_vis, rv, 0, "参数1", self.param1, 50, 500)
+        rv = self._grid_slider(left_vis, rv, 0, "参数2", self.param2, 5, 200)
+        rv = self._grid_slider(left_vis, rv, 0, "最小半径", self.min_radius, 1, 300)
+        rv = self._grid_slider(left_vis, rv, 0, "最大半径", self.max_radius, 1, 300)
         rv2 = 0
-        rv2 = self._grid_slider(right_vis, rv2, 0, "Blur ksize", self.ksize, 3, 19)
-        rv2 = self._grid_slider(right_vis, rv2, 0, "X Bias", self.x_bias, -200, 200)
-        rv2 = self._grid_slider(right_vis, rv2, 0, "Y Bias", self.y_bias, -200, 200)
+        rv2 = self._grid_slider(right_vis, rv2, 0, "模糊核大小", self.ksize, 3, 19)
+        rv2 = self._grid_slider(right_vis, rv2, 0, "X偏置", self.x_bias, -200, 200)
+        rv2 = self._grid_slider(right_vis, rv2, 0, "Y偏置", self.y_bias, -200, 200)
 
         tab_camera.columnconfigure(0, weight=1)
         cam = ttk.Frame(tab_camera)
         cam.pack(fill=tk.BOTH, expand=True)
         cam.columnconfigure(0, weight=1)
         rc = 0
-        ttk.Checkbutton(cam, text="Auto Exposure", variable=self.ae_enable).grid(row=rc, column=0, sticky="w", pady=(2, 8))
+        ttk.Checkbutton(cam, text="自动曝光", variable=self.ae_enable).grid(row=rc, column=0, sticky="w", pady=(2, 8))
         rc += 1
-        rc = self._grid_slider(cam, rc, 0, "Exposure", self.exposure_value, -8.0, 8.0)
-        rc = self._grid_slider(cam, rc, 0, "Gain", self.analogue_gain, 1.0, 22.0)
+        rc = self._grid_slider(cam, rc, 0, "曝光", self.exposure_value, -8.0, 8.0)
+        rc = self._grid_slider(cam, rc, 0, "增益", self.analogue_gain, 1.0, 22.0)
 
     def _grid_entry(self, parent, row, col, text, var, width=10):
         ttk.Label(parent, text=text).grid(row=row, column=col, sticky="w", padx=(0, 6), pady=(2, 2))
@@ -340,11 +436,11 @@ class CircleTrackerGUI:
             self.detect_thread = threading.Thread(target=self._detect_loop, daemon=True)
             self.detect_thread.start()
             self.after_id = self.root.after(30, self._ui_loop)
-            self.status_text.set("Detecting (tracking off)")
+            self.status_text.set("检测中（未跟踪）")
         except Exception as exc:
             self.worker_error = str(exc)
-            self.status_text.set(f"Init failed: {exc}")
-            messagebox.showerror("Init failed", str(exc))
+            self.status_text.set(f"初始化失败: {exc}")
+            messagebox.showerror("初始化失败", str(exc))
 
     def start(self):
         if not self.running:
@@ -353,12 +449,12 @@ class CircleTrackerGUI:
         self.pid_x.reset()
         self.pid_y.reset()
         self.kalman = Kalman2D()
-        self.status_text.set("Tracking started")
+        self.status_text.set("跟踪已开始")
 
     def stop(self):
         self.tracking_active = False
         if self.running:
-            self.status_text.set("Detecting (tracking off)")
+            self.status_text.set("检测中（未跟踪）")
 
     def reset_axes(self):
         self.current_pan_angle = 0.0
@@ -530,6 +626,19 @@ class CircleTrackerGUI:
                     time.sleep(0.002)
                     continue
                 frame_rgb, s = frame_bundle
+                roi = None
+                with self.detect_lock:
+                    last_det = self.latest_detection
+                    last_det_time = self.latest_detection_time
+                if last_det is not None and (time.time() - last_det_time) <= self.detect_stale_sec:
+                    h, w = frame_rgb.shape[:2]
+                    margin = max(80, int(last_det[2] * 2.5))
+                    x0 = max(0, int(last_det[0] - margin))
+                    y0 = max(0, int(last_det[1] - margin))
+                    x1 = min(w, int(last_det[0] + margin))
+                    y1 = min(h, int(last_det[1] + margin))
+                    if x1 - x0 >= 20 and y1 - y0 >= 20:
+                        roi = (x0, y0, x1, y1)
                 detection = self._detect_circle(
                     frame_rgb,
                     ksize=s["ksize"],
@@ -538,6 +647,7 @@ class CircleTrackerGUI:
                     param2=s["param2"],
                     min_radius=s["min_radius"],
                     max_radius=s["max_radius"],
+                    roi=roi,
                 )
                 with self.detect_lock:
                     self.latest_detection = detection
@@ -553,7 +663,7 @@ class CircleTrackerGUI:
             return
         self._update_settings_from_vars()
         if self.worker_error is not None:
-            self.status_text.set(f"Worker error: {self.worker_error}")
+            self.status_text.set(f"工作线程错误: {self.worker_error}")
             self.after_id = self.root.after(200, self._ui_loop)
             return
         latest = None
@@ -572,7 +682,7 @@ class CircleTrackerGUI:
             if dt > 0:
                 self.fps = 1.0 / dt
             self.status_text.set(
-                f"FPS={self.fps:.1f}  pan={pan:.2f}  tilt={tilt:.2f}  ex={error_x:.1f}  ey={error_y:.1f}  circle={int(circle_found)} r={radius}  track={int(do_track)}"
+                f"帧率={self.fps:.1f}  水平={pan:.2f}  俯仰={tilt:.2f}  误差X={error_x:.1f}  误差Y={error_y:.1f}  圆={int(circle_found)}  半径={radius}  跟踪={int(do_track)}"
             )
 
         self.after_id = self.root.after(30, self._ui_loop)
@@ -620,7 +730,15 @@ class CircleTrackerGUI:
             moving_time=settings["move_time_ms"],
         )
 
-    def _detect_circle(self, frame_rgb, *, ksize, min_dist, param1, param2, min_radius, max_radius):
+    def _detect_circle(self, frame_rgb, *, ksize, min_dist, param1, param2, min_radius, max_radius, roi=None):
+        offset_x = 0
+        offset_y = 0
+        if roi is not None:
+            x0, y0, x1, y1 = roi
+            if x1 - x0 >= 20 and y1 - y0 >= 20:
+                frame_rgb = frame_rgb[y0:y1, x0:x1]
+                offset_x = x0
+                offset_y = y0
         h, w = frame_rgb.shape[:2]
         scale = 0.5
         small_w = max(1, int(w * scale))
@@ -650,8 +768,8 @@ class CircleTrackerGUI:
             return None
         circles = np.round(circles[0]).astype(int)
         chosen = max(circles, key=lambda c: c[2])
-        x = int(round(chosen[0] / scale))
-        y = int(round(chosen[1] / scale))
+        x = int(round(chosen[0] / scale)) + offset_x
+        y = int(round(chosen[1] / scale)) + offset_y
         r = int(round(chosen[2] / scale))
         return x, y, r
 
@@ -672,6 +790,7 @@ class CircleTrackerGUI:
 
     def on_close(self):
         self.tracking_active = False
+        self._save_settings()
         self.stop_event.set()
         self.detect_stop_event.set()
         if self.after_id is not None:
@@ -710,7 +829,7 @@ class CircleTrackerGUI:
                 self._ensure_servo()
             except Exception as exc:
                 self.worker_error = str(exc)
-                self.status_text.set(f"Servo error: {exc}")
+                self.status_text.set(f"舵机错误: {exc}")
                 return
         self.current_pan_angle = float(self.current_pan_angle) + float(delta_pan)
         self.current_tilt_angle = float(self.current_tilt_angle) + float(delta_tilt)
