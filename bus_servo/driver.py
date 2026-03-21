@@ -36,6 +36,11 @@ class BusServoDriver:
 
     def request(self, servo_id: int, cmd: int, params=(), *, expect_cmd: Optional[int] = None):
         frame = build_frame(servo_id, cmd, params)
+
+        # 关键：发读命令前清理旧缓存 
+        if hasattr(self.transport, "ser"): 
+            self.transport.ser.reset_input_buffer() 
+
         self.transport.write(frame)
         raw = self.transport.read_frame()
         resp = parse_frame(raw)
@@ -186,11 +191,21 @@ class BusServoDriver:
             raise ValueError("invalid vin response length")
         return unpack_u16_le(resp.params[0], resp.params[1])
 
-    def read_pos(self, servo_id: int) -> int:
-        resp = self.request(servo_id, ServoCmd.SERVO_POS_READ)
-        if len(resp.params) != 2:
-            raise ValueError("invalid pos response length")
-        return unpack_i16_le(resp.params[0], resp.params[1])
+    def read_pos(self, servo_id: int, retries: int = 3, retry_gap: float = 0.03) -> int:
+        import time
+        last_err = None
+
+        for i in range(retries):
+            try:
+                resp = self.request(servo_id, ServoCmd.SERVO_POS_READ)
+                if len(resp.params) != 2:
+                    raise ValueError("invalid pos response length")
+                return unpack_i16_le(resp.params[0], resp.params[1])
+            except Exception as e:
+                last_err = e
+                time.sleep(retry_gap)
+
+        raise last_err
 
     # -------------------------
     # 模式
