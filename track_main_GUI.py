@@ -20,6 +20,10 @@ from laser_ranger_setting import configure_laser_module
 
 
 def _load_module(name, path):
+    # 避免重复加载同一模块，特别是覆盖原有的模块
+    if name in sys.modules:
+        return sys.modules[name]
+        
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     # 必须把 module 注册到 sys.modules 中，否则 dataclasses 在解析时
@@ -1162,12 +1166,12 @@ class CircleTrackerGUI:
                         self.last_laser_query_time = now
                         # 单次发起查询
                         if self.laser_ranger.query_once():
-                            dist_mm = self.laser_ranger.distance_mm
-                            print(f"[测距结果] 目标对准！当前距离: {dist_mm:.1f} mm, 信号强度: {self.laser_ranger.signal_strength}")
+                            dist_m = self.laser_ranger.distance_m
+                            print(f"[测距结果] 目标对准！当前距离: {dist_m:.3f} m, 信号强度: {self.laser_ranger.signal_strength}")
                             
                     # 获取最新距离数据用于显示
                     if len(self.laser_ranger.distance_m_data) > 0:
-                        current_distance = self.laser_ranger.distance_m_data[-1] * 1000.0
+                        current_distance = self.laser_ranger.distance_m_data[-1]
 
                 servo_status = self.latest_servo_status
                 now = time.time()
@@ -1409,7 +1413,7 @@ class CircleTrackerGUI:
                 if abs(error_x) <= deadband and abs(error_y) <= deadband and circle_found:
                     cv2.putText(frame_rgb_disp, "ALIGNMENT COMPLETE (IN DEADBAND)", (10, h - 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
                     if current_distance > 0:
-                        cv2.putText(frame_rgb_disp, f"Distance: {current_distance:.1f} mm (Updated 1s)", (10, h - 70), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
+                        cv2.putText(frame_rgb_disp, f"Distance: {current_distance:.3f} m (Updated 1s)", (10, h - 70), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
                 
                 top_row = np.hstack((frame_rgb_disp, full_green))
                 bottom_row = np.hstack((full_red, full_bin))
