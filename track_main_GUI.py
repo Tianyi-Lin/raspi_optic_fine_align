@@ -942,6 +942,7 @@ class CircleTrackerGUI:
     def _worker_loop(self):
         try:
             last_time = time.time()
+            last_dbg_ts = 0.0
             while not self.stop_event.is_set():
                 loop_start = time.time()
                 dt = max(loop_start - last_time, 1e-4)
@@ -1203,12 +1204,18 @@ class CircleTrackerGUI:
                 sleep_ms = max(0, period_ms - elapsed_ms)
                 if sleep_ms > 0:
                     time.sleep(sleep_ms / 1000.0)
+                if loop_start - last_dbg_ts >= 1.0:
+                    last_dbg_ts = loop_start
+                    # #region debug-point A:worker-loop
+                    import json, urllib.request; urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:7777/event", data=json.dumps({"sessionId":"20260322-1","runId":"pre-fix","hypothesisId":"A","location":"track_main_GUI.py:_worker_loop","msg":"[DEBUG] worker loop timing","data":{"dt_ms":round(dt * 1000.0, 2),"sleep_ms":sleep_ms,"queue_full":self.frame_queue.full(),"detect_age":detection_age}}).encode(), headers={"Content-Type":"application/json"})).read()
+                    # #endregion
         except Exception as exc:
             self.worker_error = str(exc)
             self.stop_event.set()
 
     def _detect_loop(self):
         last_processed_id = 0
+        last_dbg_ts = 0.0
         try:
             while not self.detect_stop_event.is_set():
                 with self.detect_lock:
@@ -1261,11 +1268,19 @@ class CircleTrackerGUI:
                     self.latest_detection_time = time.time()
                     self.latest_green_channel = (blurred_green, blurred_red, offset_x, offset_y, scale)
                     last_processed_id = frame_id
+                now_dbg = time.time()
+                if now_dbg - last_dbg_ts >= 1.0:
+                    last_dbg_ts = now_dbg
+                    # #region debug-point B:detect-loop
+                    import json, urllib.request; urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:7777/event", data=json.dumps({"sessionId":"20260322-1","runId":"pre-fix","hypothesisId":"B","location":"track_main_GUI.py:_detect_loop","msg":"[DEBUG] detect loop timing","data":{"frame_id":frame_id,"roi_used":roi is not None,"detected":detection_to_save is not None}}).encode(), headers={"Content-Type":"application/json"})).read()
+                    # #endregion
         except Exception as exc:
             self.worker_error = str(exc)
             self.stop_event.set()
 
     def _ui_loop(self):
+        ui_dbg_ts = getattr(self, "_ui_dbg_ts", 0.0)
+        ui_start = time.time()
         if not self.running:
             self.after_id = self.root.after(100, self._ui_loop)
             return
@@ -1439,6 +1454,12 @@ class CircleTrackerGUI:
                 self.fps_warning_var.set("")
 
         self.after_id = self.root.after(30, self._ui_loop)
+        ui_end = time.time()
+        if ui_end - ui_dbg_ts >= 1.0:
+            self._ui_dbg_ts = ui_end
+            # #region debug-point C:ui-loop
+            import json, urllib.request; urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:7777/event", data=json.dumps({"sessionId":"20260322-1","runId":"pre-fix","hypothesisId":"C","location":"track_main_GUI.py:_ui_loop","msg":"[DEBUG] ui loop timing","data":{"ui_ms":round((ui_end - ui_start) * 1000.0, 2),"queue_full":self.frame_queue.full()}}).encode(), headers={"Content-Type":"application/json"})).read()
+            # #endregion
 
     def _sync_camera_controls(self, ae_enable, exposure, gain, target_fps):
         # 检查是否有变化
@@ -1587,6 +1608,9 @@ class CircleTrackerGUI:
         self.active_pan_id = settings["pan_id"]
         self.active_tilt_id = settings["tilt_id"]
         if settings.get("servo_mode") == "控制板":
+            # #region debug-point D:servo-mode
+            import json, urllib.request; urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:7777/event", data=json.dumps({"sessionId":"20260322-1","runId":"pre-fix","hypothesisId":"D","location":"track_main_GUI.py:_ensure_servo","msg":"[DEBUG] servo mode control-board","data":{"port":settings.get("port"),"baudrate":settings.get("baudrate"),"mode":settings.get("servo_mode")}}).encode(), headers={"Content-Type":"application/json"})).read()
+            # #endregion
             self._load_board_modules()
             transport = self._board_transport_cls(
                 port=settings["port"],
@@ -1612,6 +1636,9 @@ class CircleTrackerGUI:
             self.servo_status_mode.set(settings.get("servo_mode"))
             return
         bus_servo_cls = self._get_bus_servo_cls()
+        # #region debug-point D:servo-mode
+        import json, urllib.request; urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:7777/event", data=json.dumps({"sessionId":"20260322-1","runId":"pre-fix","hypothesisId":"D","location":"track_main_GUI.py:_ensure_servo","msg":"[DEBUG] servo mode debug-board","data":{"port":settings.get("port"),"baudrate":settings.get("baudrate"),"mode":settings.get("servo_mode")}}).encode(), headers={"Content-Type":"application/json"})).read()
+        # #endregion
         self.servo = bus_servo_cls(
             port=settings["port"],
             baudrate=settings["baudrate"],
