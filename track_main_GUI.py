@@ -251,8 +251,23 @@ class CircleTrackerGUI:
         
         # 2. 尝试提前初始化舵机并在GUI显示前立即回正
         try:
+            # 确保使用正确的配置初始化舵机
+            fallback_mode = "控制板"
+            try:
+                settings_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tracker_settings.txt")
+                if os.path.exists(settings_path):
+                    with open(settings_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        fallback_mode = str(data.get("servo_mode", "控制板")).strip()
+            except Exception:
+                pass
+            
+            # 在启动前设置模式，确保 _ensure_servo 使用正确的类
+            self.servo_mode.set(fallback_mode)
             self._ensure_servo()
         except Exception as exc:
+            import traceback
+            traceback.print_exc()
             print(f"[WARNING] Servo init failed before GUI start: {exc}")
             
         # 舵机回正指令发送后，硬延时 1 秒，等待舵机机械运动到位及总线电平恢复
@@ -1523,12 +1538,16 @@ class CircleTrackerGUI:
         base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bus_servo_ctrl_board")
         original_protocol = sys.modules.get("protocol")
         original_transport = sys.modules.get("transport")
+        original_driver = sys.modules.get("driver")
         try:
             board_protocol = _load_module("_board_protocol", os.path.join(base_dir, "protocol.py"))
-            board_transport = _load_module("_board_transport", os.path.join(base_dir, "transport.py"))
             sys.modules["protocol"] = board_protocol
+            
+            board_transport = _load_module("_board_transport", os.path.join(base_dir, "transport.py"))
             sys.modules["transport"] = board_transport
+            
             board_driver = _load_module("_board_driver", os.path.join(base_dir, "driver.py"))
+            sys.modules["driver"] = board_driver
         finally:
             if original_protocol is not None:
                 sys.modules["protocol"] = original_protocol
@@ -1538,6 +1557,10 @@ class CircleTrackerGUI:
                 sys.modules["transport"] = original_transport
             else:
                 sys.modules.pop("transport", None)
+            if original_driver is not None:
+                sys.modules["driver"] = original_driver
+            else:
+                sys.modules.pop("driver", None)
         self._board_transport_cls = board_transport.SerialTransport
         self._board_driver_cls = board_driver.BusServoBoardDriver
 
@@ -1545,8 +1568,29 @@ class CircleTrackerGUI:
         if self._bus_servo_cls is not None:
             return self._bus_servo_cls
         base_dir = os.path.dirname(os.path.abspath(__file__))
-        bus_servo_module = _load_module("_bus_servo_module", os.path.join(base_dir, "bus_servo.py"))
-        self._bus_servo_cls = bus_servo_module.BusServo
+        
+        # 缓存环境
+        original_protocol = sys.modules.get("protocol")
+        original_transport = sys.modules.get("transport")
+        original_driver = sys.modules.get("driver")
+        
+        try:
+            bus_servo_module = _load_module("_bus_servo_module", os.path.join(base_dir, "bus_servo.py"))
+            self._bus_servo_cls = bus_servo_module.BusServo
+        finally:
+            if original_protocol is not None:
+                sys.modules["protocol"] = original_protocol
+            else:
+                sys.modules.pop("protocol", None)
+            if original_transport is not None:
+                sys.modules["transport"] = original_transport
+            else:
+                sys.modules.pop("transport", None)
+            if original_driver is not None:
+                sys.modules["driver"] = original_driver
+            else:
+                sys.modules.pop("driver", None)
+                
         return self._bus_servo_cls
 
     def _release_servo(self):
