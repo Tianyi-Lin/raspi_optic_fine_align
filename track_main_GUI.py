@@ -1411,9 +1411,9 @@ class CircleTrackerGUI:
                 
                 # 检查是否进入死区 (对准完成)
                 if abs(error_x) <= deadband and abs(error_y) <= deadband and circle_found:
-                    cv2.putText(frame_rgb_disp, "ALIGNMENT COMPLETE (IN DEADBAND)", (10, h - 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+                    cv2.putText(frame_rgb_disp, "ALIGNMENT COMPLETE", (10, h - 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
                     if current_distance > 0:
-                        cv2.putText(frame_rgb_disp, f"Distance: {current_distance:.3f} m (Updated 1s)", (10, h - 70), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
+                        cv2.putText(frame_rgb_disp, f"{current_distance:.3f} m", (10, h - 70), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
                 
                 top_row = np.hstack((frame_rgb_disp, full_green))
                 bottom_row = np.hstack((full_red, full_bin))
