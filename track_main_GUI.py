@@ -22,6 +22,9 @@ from laser_ranger_setting import configure_laser_module
 def _load_module(name, path):
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
+    # 必须把 module 注册到 sys.modules 中，否则 dataclasses 在解析时
+    # 通过 sys.modules.get(cls.__module__) 获取模块时会得到 None，从而引发 'NoneType' object has no attribute '__dict__' 错误
+    sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
 
