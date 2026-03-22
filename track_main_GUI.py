@@ -1207,6 +1207,9 @@ class CircleTrackerGUI:
                 if sleep_ms > 0:
                     time.sleep(sleep_ms / 1000.0)
         except Exception as exc:
+            import traceback
+            print(f"[ERROR] worker loop exception: {exc}")
+            traceback.print_exc()
             self.worker_error = str(exc)
             self.stop_event.set()
 
@@ -1265,6 +1268,9 @@ class CircleTrackerGUI:
                     self.latest_green_channel = (blurred_green, blurred_red, offset_x, offset_y, scale)
                     last_processed_id = frame_id
         except Exception as exc:
+            import traceback
+            print(f"[ERROR] detect loop exception: {exc}")
+            traceback.print_exc()
             self.worker_error = str(exc)
             self.stop_event.set()
 
