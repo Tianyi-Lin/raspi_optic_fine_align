@@ -1604,10 +1604,11 @@ class CircleTrackerGUI:
             self.servo.move_angle(wait=False)
             self.current_pan_angle = 0.0
             self.current_tilt_angle = 0.0
-            self.hw_pan_min.set(float(settings.get("pan_min", -90.0)))
-            self.hw_pan_max.set(float(settings.get("pan_max", 90.0)))
-            self.hw_tilt_min.set(float(settings.get("tilt_min", -90.0)))
-            self.hw_tilt_max.set(float(settings.get("tilt_max", 90.0)))
+            self.hw_pan_min.set(-90.0)
+            self.hw_pan_max.set(90.0)
+            self.hw_tilt_min.set(-90.0)
+            self.hw_tilt_max.set(90.0)
+            self.status_text.set("控制板不支持硬件边界读取，已设为±90°")
             self.servo_status_mode.set(settings.get("servo_mode"))
             return
         bus_servo_cls = self._get_bus_servo_cls()
