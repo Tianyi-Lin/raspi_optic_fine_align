@@ -171,7 +171,7 @@ class CircleTrackerGUI:
         self.port = tk.StringVar(value="/dev/ttyAMA1")
         # self.baudrate = tk.IntVar(value=115200)
         self.baudrate = tk.IntVar(value=9600)
-        self.imu_port = tk.StringVar(value="/dev/ttyAMA2")
+        self.imu_port = tk.StringVar(value="/dev/ttyUSB0")
         self.imu_baudrate = tk.IntVar(value=9600)
         self.pan_id = tk.IntVar(value=1)
         self.tilt_id = tk.IntVar(value=2)
@@ -314,7 +314,7 @@ class CircleTrackerGUI:
         fallback = {
             "servo_mode": "控制板",
             "baudrate": 9600,
-            "imu_port": "/dev/ttyAMA2",
+            "imu_port": "/dev/ttyUSB0",
             "imu_baudrate": 9600,
             "pan_id": 1,
             "tilt_id": 2,
