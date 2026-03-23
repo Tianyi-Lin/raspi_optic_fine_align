@@ -151,6 +151,8 @@ class CircleTrackerGUI:
         self.current_pan_angle = 0.0
         self.current_tilt_angle = 0.0
         self.servo_deg_per_step = 0.24
+        self.stab_pan_residual_deg = 0.0
+        self.stab_tilt_residual_deg = 0.0
         self.active_pan_id = 1
         self.active_tilt_id = 2
         self.jog_step_deg = tk.DoubleVar(value=1.0)
@@ -1251,6 +1253,8 @@ class CircleTrackerGUI:
         """将舵机回正到0度"""
         self.current_pan_angle = 0.0
         self.current_tilt_angle = 0.0
+        self.stab_pan_residual_deg = 0.0
+        self.stab_tilt_residual_deg = 0.0
         if self.servo is not None:
             self.servo.set_angles(
                 [
@@ -1416,8 +1420,8 @@ class CircleTrackerGUI:
                         yaw_err = self._angle_diff_deg(imu_state.yaw_deg, self.imu_zero_yaw)
                         stab_tilt_raw = pitch_err * float(s.get("stab_gain_pitch", 1.0))
                         stab_pan_raw = -yaw_err * float(s.get("stab_gain_yaw", 1.0))
-                        stab_tilt = self._quantize_to_servo_step_deg(stab_tilt_raw)
-                        stab_pan = self._quantize_to_servo_step_deg(stab_pan_raw)
+                        stab_tilt = self._quantize_to_servo_step_deg(stab_tilt_raw, axis="tilt")
+                        stab_pan = self._quantize_to_servo_step_deg(stab_pan_raw, axis="pan")
                         self.latest_imu = (
                             float(imu_state.pitch_deg),
                             float(imu_state.yaw_deg),
@@ -1943,9 +1947,21 @@ class CircleTrackerGUI:
             d += 360.0
         return d
 
-    def _quantize_to_servo_step_deg(self, angle_deg: float) -> float:
-        steps = int(round(float(angle_deg) / float(self.servo_deg_per_step)))
-        return steps * float(self.servo_deg_per_step)
+    def _quantize_to_servo_step_deg(self, angle_deg: float, axis: str = "pan") -> float:
+        raw = float(angle_deg)
+        if axis == "pan":
+            total = raw + float(self.stab_pan_residual_deg)
+        else:
+            total = raw + float(self.stab_tilt_residual_deg)
+        step = float(self.servo_deg_per_step)
+        steps = int(round(total / step))
+        quantized = steps * step
+        residual = total - quantized
+        if axis == "pan":
+            self.stab_pan_residual_deg = residual
+        else:
+            self.stab_tilt_residual_deg = residual
+        return quantized
 
     def _ensure_imu(self):
         if self.imu is not None:
@@ -2003,6 +2019,8 @@ class CircleTrackerGUI:
             return
         self.imu_zero_pitch = float(sum(pitches) / len(pitches))
         self.imu_zero_yaw = float(math.degrees(math.atan2(yaw_sin, yaw_cos)))
+        self.stab_pan_residual_deg = 0.0
+        self.stab_tilt_residual_deg = 0.0
         self.imu_status_pitch_base.set(f"{self.imu_zero_pitch:+.2f}")
         self.imu_status_yaw_base.set(f"{self.imu_zero_yaw:+.2f}")
         self.imu_status_pitch_delta.set("+0.00")
