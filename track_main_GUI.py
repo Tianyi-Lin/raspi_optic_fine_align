@@ -428,7 +428,7 @@ class CircleTrackerGUI:
             "servo_mode": "控制板",
             "port": "/dev/ttyAMA1",
             "baudrate": 9600,
-            "imu_port": "/dev/ttyAMA2",
+            "imu_port": "/dev/ttyUSB0",
             "imu_baudrate": 9600,
             "pan_id": 1,
             "tilt_id": 2,
