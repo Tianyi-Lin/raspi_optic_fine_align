@@ -150,6 +150,7 @@ class CircleTrackerGUI:
         self.pid_y = PID(kP=0.01, kI=0.02, kD=0.000005, output_bound_low=-12, output_bound_high=12)
         self.current_pan_angle = 0.0
         self.current_tilt_angle = 0.0
+        self.servo_deg_per_step = 0.24
         self.active_pan_id = 1
         self.active_tilt_id = 2
         self.jog_step_deg = tk.DoubleVar(value=1.0)
@@ -1359,8 +1360,10 @@ class CircleTrackerGUI:
                     if imu_state is not None and imu_state.last_update > 0:
                         pitch_err = self._angle_diff_deg(imu_state.pitch_deg, self.imu_zero_pitch)
                         yaw_err = self._angle_diff_deg(imu_state.yaw_deg, self.imu_zero_yaw)
-                        stab_tilt = pitch_err * float(s.get("stab_gain_pitch", 1.0))
-                        stab_pan = -yaw_err * float(s.get("stab_gain_yaw", 1.0))
+                        stab_tilt_raw = pitch_err * float(s.get("stab_gain_pitch", 1.0))
+                        stab_pan_raw = -yaw_err * float(s.get("stab_gain_yaw", 1.0))
+                        stab_tilt = self._quantize_to_servo_step_deg(stab_tilt_raw)
+                        stab_pan = self._quantize_to_servo_step_deg(stab_pan_raw)
                         self.latest_imu = (
                             float(imu_state.pitch_deg),
                             float(imu_state.yaw_deg),
@@ -1839,6 +1842,10 @@ class CircleTrackerGUI:
         while d < -180.0:
             d += 360.0
         return d
+
+    def _quantize_to_servo_step_deg(self, angle_deg: float) -> float:
+        steps = int(round(float(angle_deg) / float(self.servo_deg_per_step)))
+        return steps * float(self.servo_deg_per_step)
 
     def _ensure_imu(self):
         if self.imu is not None:
