@@ -247,6 +247,9 @@ class CircleTrackerGUI:
         self.smoothed_detection = None
         self.ema_alpha = 0.3  # 平滑系数，越小越平滑但延迟越大，越大响应越快但抖动越大
 
+        self._autosave_after_id = None
+        self._autosave_suppress = True
+
         self._load_settings()
         self._build_ui()
         self.servo_mode.trace_add("write", self._on_servo_mode_change)
@@ -254,6 +257,8 @@ class CircleTrackerGUI:
         self.root.bind("<Escape>", lambda _e: self.on_close())
         self.root.bind("q", lambda _e: self.on_close())
         self._update_settings_from_vars()
+        self._attach_autosave()
+        self._autosave_suppress = False
         
         # 1. 强制配置激光测距模块为查询模式 (Passive / Inquire)
         configure_laser_module(
@@ -606,7 +611,7 @@ class CircleTrackerGUI:
                 else:
                     var.set(value)
 
-    def _save_settings(self):
+    def _save_settings(self, quiet=False):
         path = self._settings_path()
         try:
             data = {
@@ -656,9 +661,80 @@ class CircleTrackerGUI:
             }
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
-            print(f"[INFO] 设置已保存到: {path}")
+            if not quiet:
+                print(f"[INFO] 设置已保存到: {path}")
         except Exception as e:
             print(f"[ERROR] 保存设置失败: {e}")
+
+    def _schedule_autosave(self):
+        if self._autosave_suppress:
+            return
+        if self._autosave_after_id is not None:
+            try:
+                self.root.after_cancel(self._autosave_after_id)
+            except Exception:
+                pass
+        self._autosave_after_id = self.root.after(600, self._run_autosave)
+
+    def _run_autosave(self):
+        self._autosave_after_id = None
+        self._save_settings(quiet=True)
+
+    def _attach_autosave(self):
+        autosave_vars = [
+            self.servo_mode,
+            self.port,
+            self.baudrate,
+            self.imu_port,
+            self.imu_baudrate,
+            self.pan_id,
+            self.tilt_id,
+            self.move_time_ms,
+            self.control_period_ms,
+            self.track_enabled,
+            self.pan_enabled,
+            self.tilt_enabled,
+            self.kp_x,
+            self.ki_x,
+            self.kd_x,
+            self.kp_y,
+            self.ki_y,
+            self.kd_y,
+            self.error_deadband,
+            self.max_delta_deg_per_sec,
+            self.exposure_value,
+            self.analogue_gain,
+            self.ae_enable,
+            self.ksize,
+            self.min_dist,
+            self.param1,
+            self.param2,
+            self.min_radius,
+            self.max_radius,
+            self.x_bias,
+            self.y_bias,
+            self.camera_fps,
+            self.laser_align_mode,
+            self.laser_threshold,
+            self.pan_min,
+            self.pan_max,
+            self.tilt_min,
+            self.tilt_max,
+            self.kalman_process_noise,
+            self.kalman_measurement_noise,
+            self.auto_stabilize,
+            self.stab_gain_pitch,
+            self.stab_gain_yaw,
+            self.hw_pan_min,
+            self.hw_pan_max,
+            self.hw_tilt_min,
+            self.hw_tilt_max,
+        ]
+        for var in autosave_vars:
+            try:
+                var.trace_add("write", lambda *_args: self._schedule_autosave())
+            except Exception:
+                pass
 
     def _build_ui(self):
         main = ttk.Frame(self.root, padding=8)
