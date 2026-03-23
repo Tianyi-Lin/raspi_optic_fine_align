@@ -162,6 +162,10 @@ class CircleTrackerGUI:
         self.imu_status_pitch = tk.StringVar(value="-")
         self.imu_status_yaw = tk.StringVar(value="-")
         self.imu_status_age = tk.StringVar(value="-")
+        self.imu_status_pitch_base = tk.StringVar(value="-")
+        self.imu_status_yaw_base = tk.StringVar(value="-")
+        self.imu_status_pitch_delta = tk.StringVar(value="-")
+        self.imu_status_yaw_delta = tk.StringVar(value="-")
         self.latest_servo_status = None
         self.last_servo_status_time = 0.0
         self._board_transport_cls = None
@@ -913,6 +917,14 @@ class CircleTrackerGUI:
         ttk.Label(imu_frame, textvariable=self.imu_status_yaw).grid(row=4, column=3, sticky="w")
         ttk.Label(imu_frame, text="Age:").grid(row=4, column=0, sticky="e")
         ttk.Label(imu_frame, textvariable=self.imu_status_age).grid(row=4, column=1, sticky="w")
+        ttk.Label(imu_frame, text="基准Pitch:").grid(row=5, column=0, sticky="e")
+        ttk.Label(imu_frame, textvariable=self.imu_status_pitch_base).grid(row=5, column=1, sticky="w")
+        ttk.Label(imu_frame, text="基准Yaw:").grid(row=5, column=2, sticky="e")
+        ttk.Label(imu_frame, textvariable=self.imu_status_yaw_base).grid(row=5, column=3, sticky="w")
+        ttk.Label(imu_frame, text="ΔPitch:").grid(row=6, column=0, sticky="e")
+        ttk.Label(imu_frame, textvariable=self.imu_status_pitch_delta).grid(row=6, column=1, sticky="w")
+        ttk.Label(imu_frame, text="ΔYaw:").grid(row=6, column=2, sticky="e")
+        ttk.Label(imu_frame, textvariable=self.imu_status_yaw_delta).grid(row=6, column=3, sticky="w")
 
         pid_cols = ttk.Frame(tab_pid)
         pid_cols.pack(fill=tk.BOTH, expand=True)
@@ -1340,9 +1352,15 @@ class CircleTrackerGUI:
                     if imu_state is not None and imu_state.last_update > 0:
                         pitch_err = self._angle_diff_deg(imu_state.pitch_deg, self.imu_zero_pitch)
                         yaw_err = self._angle_diff_deg(imu_state.yaw_deg, self.imu_zero_yaw)
-                        stab_tilt = -pitch_err * float(s.get("stab_gain_pitch", 1.0))
+                        stab_tilt = pitch_err * float(s.get("stab_gain_pitch", 1.0))
                         stab_pan = -yaw_err * float(s.get("stab_gain_yaw", 1.0))
-                        self.latest_imu = (float(imu_state.pitch_deg), float(imu_state.yaw_deg), float(time.time() - imu_state.last_update))
+                        self.latest_imu = (
+                            float(imu_state.pitch_deg),
+                            float(imu_state.yaw_deg),
+                            float(time.time() - imu_state.last_update),
+                            float(pitch_err),
+                            float(yaw_err),
+                        )
                 # 使用GUI配置和硬件物理边界的交集作为最终限制
                 # max(硬件最小, GUI最小) 和 min(硬件最大, GUI最大)
                 pan_min = max(float(s.get("hw_pan_min", -90.0)), float(s.get("pan_min", -90.0)))
@@ -1695,15 +1713,23 @@ class CircleTrackerGUI:
             status_msg = f"相机FPS={self.fps_cam:.1f}  控制Hz={self.fps_ctrl:.1f}  水平={pan:.2f}  俯仰={tilt:.2f}  误差X={error_x:.1f}  误差Y={error_y:.1f}  圆={int(circle_found)}  半径={radius}  跟踪={int(do_track)}"
             imu_snapshot = self.latest_imu
             if imu_snapshot is not None:
-                pitch_deg, yaw_deg, age_sec = imu_snapshot
+                pitch_deg, yaw_deg, age_sec, pitch_delta, yaw_delta = imu_snapshot
                 self.imu_status_pitch.set(f"{pitch_deg:+.2f}")
                 self.imu_status_yaw.set(f"{yaw_deg:+.2f}")
                 self.imu_status_age.set(f"{age_sec:.2f}s")
-                status_msg += f"  稳定={int(self.auto_stabilize.get())}  IMU(pitch={pitch_deg:+.1f}, yaw={yaw_deg:+.1f})"
+                self.imu_status_pitch_base.set(f"{self.imu_zero_pitch:+.2f}")
+                self.imu_status_yaw_base.set(f"{self.imu_zero_yaw:+.2f}")
+                self.imu_status_pitch_delta.set(f"{pitch_delta:+.2f}")
+                self.imu_status_yaw_delta.set(f"{yaw_delta:+.2f}")
+                status_msg += f"  稳定={int(self.auto_stabilize.get())}  IMU(p={pitch_deg:+.1f},y={yaw_deg:+.1f},dp={pitch_delta:+.1f},dy={yaw_delta:+.1f})"
             else:
                 self.imu_status_pitch.set("-")
                 self.imu_status_yaw.set("-")
                 self.imu_status_age.set("-")
+                self.imu_status_pitch_base.set(f"{self.imu_zero_pitch:+.2f}")
+                self.imu_status_yaw_base.set(f"{self.imu_zero_yaw:+.2f}")
+                self.imu_status_pitch_delta.set("-")
+                self.imu_status_yaw_delta.set("-")
             if self.laser_align_mode.get():
                 if laser_locked:
                     status_msg += "  [指示对准: 已锁定光斑]"
@@ -1863,6 +1889,10 @@ class CircleTrackerGUI:
             return
         self.imu_zero_pitch = float(sum(pitches) / len(pitches))
         self.imu_zero_yaw = float(math.degrees(math.atan2(yaw_sin, yaw_cos)))
+        self.imu_status_pitch_base.set(f"{self.imu_zero_pitch:+.2f}")
+        self.imu_status_yaw_base.set(f"{self.imu_zero_yaw:+.2f}")
+        self.imu_status_pitch_delta.set("+0.00")
+        self.imu_status_yaw_delta.set("+0.00")
         self.status_text.set("IMU已置零(平均)")
 
     def _apply_imu_output_rate(self):
