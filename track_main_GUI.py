@@ -154,6 +154,7 @@ class CircleTrackerGUI:
         self.stab_pan_residual_deg = 0.0
         self.stab_tilt_residual_deg = 0.0
         self.stab_pan_filtered_deg = 0.0
+        self.stab_tilt_filtered_deg = 0.0
         self.active_pan_id = 1
         self.active_tilt_id = 2
         self.jog_step_deg = tk.DoubleVar(value=1.0)
@@ -226,6 +227,10 @@ class CircleTrackerGUI:
         self.auto_stabilize = tk.BooleanVar(value=False)
         self.stab_gain_pitch = tk.DoubleVar(value=1.0)
         self.stab_gain_yaw = tk.DoubleVar(value=1.0)
+        self.stab_pitch_deadband_deg = tk.DoubleVar(value=0.6)
+        self.stab_tilt_limit_deg = tk.DoubleVar(value=8.0)
+        self.stab_tilt_alpha = tk.DoubleVar(value=0.35)
+        self.stab_tilt_rate_limit_deg_per_s = tk.DoubleVar(value=120.0)
         self.stab_yaw_deadband_deg = tk.DoubleVar(value=0.6)
         self.stab_pan_limit_deg = tk.DoubleVar(value=8.0)
         self.stab_pan_alpha = tk.DoubleVar(value=0.35)
@@ -387,6 +392,10 @@ class CircleTrackerGUI:
             "auto_stabilize": False,
             "stab_gain_pitch": 1.0,
             "stab_gain_yaw": 1.0,
+            "stab_pitch_deadband_deg": 0.6,
+            "stab_tilt_limit_deg": 8.0,
+            "stab_tilt_alpha": 0.35,
+            "stab_tilt_rate_limit_deg_per_s": 120.0,
             "stab_yaw_deadband_deg": 0.6,
             "stab_pan_limit_deg": 8.0,
             "stab_pan_alpha": 0.35,
@@ -479,6 +488,10 @@ class CircleTrackerGUI:
                 "auto_stabilize": safe_bool(self.auto_stabilize),
                 "stab_gain_pitch": safe_float(self.stab_gain_pitch, "stab_gain_pitch"),
                 "stab_gain_yaw": safe_float(self.stab_gain_yaw, "stab_gain_yaw"),
+                "stab_pitch_deadband_deg": safe_float(self.stab_pitch_deadband_deg, "stab_pitch_deadband_deg"),
+                "stab_tilt_limit_deg": safe_float(self.stab_tilt_limit_deg, "stab_tilt_limit_deg"),
+                "stab_tilt_alpha": safe_float(self.stab_tilt_alpha, "stab_tilt_alpha"),
+                "stab_tilt_rate_limit_deg_per_s": safe_float(self.stab_tilt_rate_limit_deg_per_s, "stab_tilt_rate_limit_deg_per_s"),
                 "stab_yaw_deadband_deg": safe_float(self.stab_yaw_deadband_deg, "stab_yaw_deadband_deg"),
                 "stab_pan_limit_deg": safe_float(self.stab_pan_limit_deg, "stab_pan_limit_deg"),
                 "stab_pan_alpha": safe_float(self.stab_pan_alpha, "stab_pan_alpha"),
@@ -541,6 +554,10 @@ class CircleTrackerGUI:
             "auto_stabilize": False,
             "stab_gain_pitch": 1.0,
             "stab_gain_yaw": 1.0,
+            "stab_pitch_deadband_deg": 0.6,
+            "stab_tilt_limit_deg": 8.0,
+            "stab_tilt_alpha": 0.35,
+            "stab_tilt_rate_limit_deg_per_s": 120.0,
             "stab_yaw_deadband_deg": 0.6,
             "stab_pan_limit_deg": 8.0,
             "stab_pan_alpha": 0.35,
@@ -619,6 +636,10 @@ class CircleTrackerGUI:
             "auto_stabilize": safe_bool(self.auto_stabilize, "auto_stabilize"),
             "stab_gain_pitch": safe_float(self.stab_gain_pitch, "stab_gain_pitch"),
             "stab_gain_yaw": safe_float(self.stab_gain_yaw, "stab_gain_yaw"),
+            "stab_pitch_deadband_deg": safe_float(self.stab_pitch_deadband_deg, "stab_pitch_deadband_deg"),
+            "stab_tilt_limit_deg": safe_float(self.stab_tilt_limit_deg, "stab_tilt_limit_deg"),
+            "stab_tilt_alpha": safe_float(self.stab_tilt_alpha, "stab_tilt_alpha"),
+            "stab_tilt_rate_limit_deg_per_s": safe_float(self.stab_tilt_rate_limit_deg_per_s, "stab_tilt_rate_limit_deg_per_s"),
             "stab_yaw_deadband_deg": safe_float(self.stab_yaw_deadband_deg, "stab_yaw_deadband_deg"),
             "stab_pan_limit_deg": safe_float(self.stab_pan_limit_deg, "stab_pan_limit_deg"),
             "stab_pan_alpha": safe_float(self.stab_pan_alpha, "stab_pan_alpha"),
@@ -695,6 +716,10 @@ class CircleTrackerGUI:
             "auto_stabilize": self.auto_stabilize,
             "stab_gain_pitch": self.stab_gain_pitch,
             "stab_gain_yaw": self.stab_gain_yaw,
+            "stab_pitch_deadband_deg": self.stab_pitch_deadband_deg,
+            "stab_tilt_limit_deg": self.stab_tilt_limit_deg,
+            "stab_tilt_alpha": self.stab_tilt_alpha,
+            "stab_tilt_rate_limit_deg_per_s": self.stab_tilt_rate_limit_deg_per_s,
             "stab_yaw_deadband_deg": self.stab_yaw_deadband_deg,
             "stab_pan_limit_deg": self.stab_pan_limit_deg,
             "stab_pan_alpha": self.stab_pan_alpha,
@@ -777,6 +802,10 @@ class CircleTrackerGUI:
                 "auto_stabilize": bool(self.auto_stabilize.get()),
                 "stab_gain_pitch": float(self.stab_gain_pitch.get()),
                 "stab_gain_yaw": float(self.stab_gain_yaw.get()),
+                "stab_pitch_deadband_deg": float(self.stab_pitch_deadband_deg.get()),
+                "stab_tilt_limit_deg": float(self.stab_tilt_limit_deg.get()),
+                "stab_tilt_alpha": float(self.stab_tilt_alpha.get()),
+                "stab_tilt_rate_limit_deg_per_s": float(self.stab_tilt_rate_limit_deg_per_s.get()),
                 "stab_yaw_deadband_deg": float(self.stab_yaw_deadband_deg.get()),
                 "stab_pan_limit_deg": float(self.stab_pan_limit_deg.get()),
                 "stab_pan_alpha": float(self.stab_pan_alpha.get()),
@@ -860,6 +889,10 @@ class CircleTrackerGUI:
             self.auto_stabilize,
             self.stab_gain_pitch,
             self.stab_gain_yaw,
+            self.stab_pitch_deadband_deg,
+            self.stab_tilt_limit_deg,
+            self.stab_tilt_alpha,
+            self.stab_tilt_rate_limit_deg_per_s,
             self.stab_yaw_deadband_deg,
             self.stab_pan_limit_deg,
             self.stab_pan_alpha,
@@ -979,30 +1012,38 @@ class CircleTrackerGUI:
         ttk.Entry(imu_frame, textvariable=self.stab_gain_pitch, width=10).grid(row=3, column=1, sticky="w", padx=5)
         ttk.Label(imu_frame, text="Yaw增益:").grid(row=3, column=2, sticky="e")
         ttk.Entry(imu_frame, textvariable=self.stab_gain_yaw, width=10).grid(row=3, column=3, sticky="w", padx=5)
-        ttk.Label(imu_frame, text="Yaw死区(°):").grid(row=4, column=0, sticky="e")
-        ttk.Entry(imu_frame, textvariable=self.stab_yaw_deadband_deg, width=10).grid(row=4, column=1, sticky="w", padx=5)
-        ttk.Label(imu_frame, text="Yaw限幅(°):").grid(row=4, column=2, sticky="e")
-        ttk.Entry(imu_frame, textvariable=self.stab_pan_limit_deg, width=10).grid(row=4, column=3, sticky="w", padx=5)
-        ttk.Label(imu_frame, text="Yaw平滑α:").grid(row=5, column=0, sticky="e")
-        ttk.Entry(imu_frame, textvariable=self.stab_pan_alpha, width=10).grid(row=5, column=1, sticky="w", padx=5)
-        ttk.Label(imu_frame, text="Yaw速度限幅(°/s):").grid(row=5, column=2, sticky="e")
-        ttk.Entry(imu_frame, textvariable=self.stab_pan_rate_limit_deg_per_s, width=10).grid(row=5, column=3, sticky="w", padx=5)
-        ttk.Button(imu_frame, text="IMU置零", command=self._zero_imu).grid(row=6, column=0, sticky="ew", pady=(8, 0))
-        ttk.Button(imu_frame, text="零偏设置", command=self._open_imu_offsets_dialog).grid(row=6, column=1, sticky="ew", pady=(8, 0), padx=(5, 0))
-        ttk.Label(imu_frame, text="Pitch:").grid(row=6, column=2, sticky="e", pady=(8, 0))
-        ttk.Label(imu_frame, textvariable=self.imu_status_pitch).grid(row=6, column=3, sticky="w", pady=(8, 0))
-        ttk.Label(imu_frame, text="Yaw:").grid(row=7, column=2, sticky="e")
-        ttk.Label(imu_frame, textvariable=self.imu_status_yaw).grid(row=7, column=3, sticky="w")
-        ttk.Label(imu_frame, text="Age:").grid(row=7, column=0, sticky="e")
-        ttk.Label(imu_frame, textvariable=self.imu_status_age).grid(row=7, column=1, sticky="w")
-        ttk.Label(imu_frame, text="基准Pitch:").grid(row=8, column=0, sticky="e")
-        ttk.Label(imu_frame, textvariable=self.imu_status_pitch_base).grid(row=8, column=1, sticky="w")
-        ttk.Label(imu_frame, text="基准Yaw:").grid(row=8, column=2, sticky="e")
-        ttk.Label(imu_frame, textvariable=self.imu_status_yaw_base).grid(row=8, column=3, sticky="w")
-        ttk.Label(imu_frame, text="ΔPitch:").grid(row=9, column=0, sticky="e")
-        ttk.Label(imu_frame, textvariable=self.imu_status_pitch_delta).grid(row=9, column=1, sticky="w")
-        ttk.Label(imu_frame, text="ΔYaw:").grid(row=9, column=2, sticky="e")
-        ttk.Label(imu_frame, textvariable=self.imu_status_yaw_delta).grid(row=9, column=3, sticky="w")
+        ttk.Label(imu_frame, text="Pitch死区(°):").grid(row=4, column=0, sticky="e")
+        ttk.Entry(imu_frame, textvariable=self.stab_pitch_deadband_deg, width=10).grid(row=4, column=1, sticky="w", padx=5)
+        ttk.Label(imu_frame, text="Yaw死区(°):").grid(row=4, column=2, sticky="e")
+        ttk.Entry(imu_frame, textvariable=self.stab_yaw_deadband_deg, width=10).grid(row=4, column=3, sticky="w", padx=5)
+        ttk.Label(imu_frame, text="Pitch限幅(°):").grid(row=5, column=0, sticky="e")
+        ttk.Entry(imu_frame, textvariable=self.stab_tilt_limit_deg, width=10).grid(row=5, column=1, sticky="w", padx=5)
+        ttk.Label(imu_frame, text="Yaw限幅(°):").grid(row=5, column=2, sticky="e")
+        ttk.Entry(imu_frame, textvariable=self.stab_pan_limit_deg, width=10).grid(row=5, column=3, sticky="w", padx=5)
+        ttk.Label(imu_frame, text="Pitch平滑α:").grid(row=6, column=0, sticky="e")
+        ttk.Entry(imu_frame, textvariable=self.stab_tilt_alpha, width=10).grid(row=6, column=1, sticky="w", padx=5)
+        ttk.Label(imu_frame, text="Yaw平滑α:").grid(row=6, column=2, sticky="e")
+        ttk.Entry(imu_frame, textvariable=self.stab_pan_alpha, width=10).grid(row=6, column=3, sticky="w", padx=5)
+        ttk.Label(imu_frame, text="Pitch速度限幅(°/s):").grid(row=7, column=0, sticky="e")
+        ttk.Entry(imu_frame, textvariable=self.stab_tilt_rate_limit_deg_per_s, width=10).grid(row=7, column=1, sticky="w", padx=5)
+        ttk.Label(imu_frame, text="Yaw速度限幅(°/s):").grid(row=7, column=2, sticky="e")
+        ttk.Entry(imu_frame, textvariable=self.stab_pan_rate_limit_deg_per_s, width=10).grid(row=7, column=3, sticky="w", padx=5)
+        ttk.Button(imu_frame, text="IMU置零", command=self._zero_imu).grid(row=8, column=0, sticky="ew", pady=(8, 0))
+        ttk.Button(imu_frame, text="零偏设置", command=self._open_imu_offsets_dialog).grid(row=8, column=1, sticky="ew", pady=(8, 0), padx=(5, 0))
+        ttk.Label(imu_frame, text="Pitch:").grid(row=8, column=2, sticky="e", pady=(8, 0))
+        ttk.Label(imu_frame, textvariable=self.imu_status_pitch).grid(row=8, column=3, sticky="w", pady=(8, 0))
+        ttk.Label(imu_frame, text="Yaw:").grid(row=9, column=2, sticky="e")
+        ttk.Label(imu_frame, textvariable=self.imu_status_yaw).grid(row=9, column=3, sticky="w")
+        ttk.Label(imu_frame, text="Age:").grid(row=9, column=0, sticky="e")
+        ttk.Label(imu_frame, textvariable=self.imu_status_age).grid(row=9, column=1, sticky="w")
+        ttk.Label(imu_frame, text="基准Pitch:").grid(row=10, column=0, sticky="e")
+        ttk.Label(imu_frame, textvariable=self.imu_status_pitch_base).grid(row=10, column=1, sticky="w")
+        ttk.Label(imu_frame, text="基准Yaw:").grid(row=10, column=2, sticky="e")
+        ttk.Label(imu_frame, textvariable=self.imu_status_yaw_base).grid(row=10, column=3, sticky="w")
+        ttk.Label(imu_frame, text="ΔPitch:").grid(row=11, column=0, sticky="e")
+        ttk.Label(imu_frame, textvariable=self.imu_status_pitch_delta).grid(row=11, column=1, sticky="w")
+        ttk.Label(imu_frame, text="ΔYaw:").grid(row=11, column=2, sticky="e")
+        ttk.Label(imu_frame, textvariable=self.imu_status_yaw_delta).grid(row=11, column=3, sticky="w")
 
         pid_cols = ttk.Frame(tab_pid)
         pid_cols.pack(fill=tk.BOTH, expand=True)
@@ -1318,6 +1359,7 @@ class CircleTrackerGUI:
         self.stab_pan_residual_deg = 0.0
         self.stab_tilt_residual_deg = 0.0
         self.stab_pan_filtered_deg = 0.0
+        self.stab_tilt_filtered_deg = 0.0
         self.status_text.set("跟踪已开始")
 
     def stop(self):
@@ -1342,6 +1384,8 @@ class CircleTrackerGUI:
         self.current_tilt_angle = 0.0
         self.stab_pan_residual_deg = 0.0
         self.stab_tilt_residual_deg = 0.0
+        self.stab_pan_filtered_deg = 0.0
+        self.stab_tilt_filtered_deg = 0.0
         if self.servo is not None:
             self.servo.set_angles(
                 [
@@ -1505,7 +1549,24 @@ class CircleTrackerGUI:
                     if imu_state is not None and imu_state.last_update > 0:
                         pitch_err = self._angle_diff_deg(imu_state.pitch_deg, self.imu_zero_pitch)
                         yaw_err = self._angle_diff_deg(imu_state.yaw_deg, self.imu_zero_yaw)
-                        stab_tilt_raw = pitch_err * float(s.get("stab_gain_pitch", 1.0))
+                        pitch_deadband = max(0.0, float(s.get("stab_pitch_deadband_deg", 0.6)))
+                        if abs(pitch_err) < pitch_deadband:
+                            pitch_err = 0.0
+                        tilt_limit = max(0.0, float(s.get("stab_tilt_limit_deg", 8.0)))
+                        stab_tilt_target = pitch_err * float(s.get("stab_gain_pitch", 1.0))
+                        stab_tilt_target = max(-tilt_limit, min(tilt_limit, stab_tilt_target))
+                        tilt_alpha = float(s.get("stab_tilt_alpha", 0.35))
+                        tilt_alpha = max(0.0, min(1.0, tilt_alpha))
+                        tilt_filtered_target = self.stab_tilt_filtered_deg + tilt_alpha * (stab_tilt_target - self.stab_tilt_filtered_deg)
+                        tilt_rate_limit = max(0.0, float(s.get("stab_tilt_rate_limit_deg_per_s", 120.0)))
+                        tilt_max_delta = tilt_rate_limit * dt
+                        tilt_delta_filtered = tilt_filtered_target - self.stab_tilt_filtered_deg
+                        if tilt_delta_filtered > tilt_max_delta:
+                            tilt_delta_filtered = tilt_max_delta
+                        elif tilt_delta_filtered < -tilt_max_delta:
+                            tilt_delta_filtered = -tilt_max_delta
+                        self.stab_tilt_filtered_deg = self.stab_tilt_filtered_deg + tilt_delta_filtered
+                        stab_tilt_raw = self.stab_tilt_filtered_deg
                         yaw_deadband = max(0.0, float(s.get("stab_yaw_deadband_deg", 0.6)))
                         if abs(yaw_err) < yaw_deadband:
                             yaw_err = 0.0
@@ -2127,6 +2188,7 @@ class CircleTrackerGUI:
         self.stab_pan_residual_deg = 0.0
         self.stab_tilt_residual_deg = 0.0
         self.stab_pan_filtered_deg = 0.0
+        self.stab_tilt_filtered_deg = 0.0
         self.imu_status_pitch_base.set(f"{self.imu_zero_pitch:+.2f}")
         self.imu_status_yaw_base.set(f"{self.imu_zero_yaw:+.2f}")
         self.imu_status_pitch_delta.set("+0.00")
@@ -2453,8 +2515,6 @@ class CircleTrackerGUI:
                 a, b = b, a
             a = max(-120.0, min(120.0, a))
             b = max(-120.0, min(120.0, b))
-            if (b - a) < 20.0:
-                return default_min, default_max, False
             return a, b, True
 
         print("[INFO] 正在读取水平舵机硬件边界...")
