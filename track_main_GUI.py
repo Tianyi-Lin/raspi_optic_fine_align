@@ -173,6 +173,16 @@ class CircleTrackerGUI:
         self.baudrate = tk.IntVar(value=9600)
         self.imu_port = tk.StringVar(value="/dev/ttyUSB0")
         self.imu_baudrate = tk.IntVar(value=9600)
+        self.imu_output_hz = tk.IntVar(value=50)
+        self.imu_ax_offset_g = tk.DoubleVar(value=0.0)
+        self.imu_ay_offset_g = tk.DoubleVar(value=0.0)
+        self.imu_az_offset_g = tk.DoubleVar(value=0.0)
+        self.imu_gx_offset_dps = tk.DoubleVar(value=0.0)
+        self.imu_gy_offset_dps = tk.DoubleVar(value=0.0)
+        self.imu_gz_offset_dps = tk.DoubleVar(value=0.0)
+        self.imu_hx_offset = tk.IntVar(value=0)
+        self.imu_hy_offset = tk.IntVar(value=0)
+        self.imu_hz_offset = tk.IntVar(value=0)
         self.pan_id = tk.IntVar(value=1)
         self.tilt_id = tk.IntVar(value=2)
         self.move_time_ms = tk.IntVar(value=40)
@@ -387,6 +397,16 @@ class CircleTrackerGUI:
                 "baudrate": safe_int(self.baudrate, "baudrate"),
                 "imu_port": str(self.imu_port.get()),
                 "imu_baudrate": safe_int(self.imu_baudrate, "imu_baudrate"),
+                "imu_output_hz": safe_int(self.imu_output_hz, "imu_output_hz"),
+                "imu_ax_offset_g": safe_float(self.imu_ax_offset_g, "imu_ax_offset_g"),
+                "imu_ay_offset_g": safe_float(self.imu_ay_offset_g, "imu_ay_offset_g"),
+                "imu_az_offset_g": safe_float(self.imu_az_offset_g, "imu_az_offset_g"),
+                "imu_gx_offset_dps": safe_float(self.imu_gx_offset_dps, "imu_gx_offset_dps"),
+                "imu_gy_offset_dps": safe_float(self.imu_gy_offset_dps, "imu_gy_offset_dps"),
+                "imu_gz_offset_dps": safe_float(self.imu_gz_offset_dps, "imu_gz_offset_dps"),
+                "imu_hx_offset": safe_int(self.imu_hx_offset, "imu_hx_offset"),
+                "imu_hy_offset": safe_int(self.imu_hy_offset, "imu_hy_offset"),
+                "imu_hz_offset": safe_int(self.imu_hz_offset, "imu_hz_offset"),
                 "pan_id": safe_int(self.pan_id, "pan_id"),
                 "tilt_id": safe_int(self.tilt_id, "tilt_id"),
                 "move_time_ms": safe_int(self.move_time_ms, "move_time_ms"),
@@ -435,6 +455,16 @@ class CircleTrackerGUI:
             "baudrate": 9600,
             "imu_port": "/dev/ttyUSB0",
             "imu_baudrate": 9600,
+            "imu_output_hz": 50,
+            "imu_ax_offset_g": 0.0,
+            "imu_ay_offset_g": 0.0,
+            "imu_az_offset_g": 0.0,
+            "imu_gx_offset_dps": 0.0,
+            "imu_gy_offset_dps": 0.0,
+            "imu_gz_offset_dps": 0.0,
+            "imu_hx_offset": 0,
+            "imu_hy_offset": 0,
+            "imu_hz_offset": 0,
             "pan_id": 1,
             "tilt_id": 2,
             "move_time_ms": 40,
@@ -494,6 +524,16 @@ class CircleTrackerGUI:
             "baudrate": safe_int(self.baudrate, "baudrate"),
             "imu_port": str(self.imu_port.get()) if self.imu_port.get() else defaults["imu_port"],
             "imu_baudrate": safe_int(self.imu_baudrate, "imu_baudrate"),
+            "imu_output_hz": safe_int(self.imu_output_hz, "imu_output_hz"),
+            "imu_ax_offset_g": safe_float(self.imu_ax_offset_g, "imu_ax_offset_g"),
+            "imu_ay_offset_g": safe_float(self.imu_ay_offset_g, "imu_ay_offset_g"),
+            "imu_az_offset_g": safe_float(self.imu_az_offset_g, "imu_az_offset_g"),
+            "imu_gx_offset_dps": safe_float(self.imu_gx_offset_dps, "imu_gx_offset_dps"),
+            "imu_gy_offset_dps": safe_float(self.imu_gy_offset_dps, "imu_gy_offset_dps"),
+            "imu_gz_offset_dps": safe_float(self.imu_gz_offset_dps, "imu_gz_offset_dps"),
+            "imu_hx_offset": safe_int(self.imu_hx_offset, "imu_hx_offset"),
+            "imu_hy_offset": safe_int(self.imu_hy_offset, "imu_hy_offset"),
+            "imu_hz_offset": safe_int(self.imu_hz_offset, "imu_hz_offset"),
             "pan_id": safe_int(self.pan_id, "pan_id"),
             "tilt_id": safe_int(self.tilt_id, "tilt_id"),
             "move_time_ms": safe_int(self.move_time_ms, "move_time_ms"),
@@ -557,6 +597,16 @@ class CircleTrackerGUI:
             "baudrate": self.baudrate,
             "imu_port": self.imu_port,
             "imu_baudrate": self.imu_baudrate,
+            "imu_output_hz": self.imu_output_hz,
+            "imu_ax_offset_g": self.imu_ax_offset_g,
+            "imu_ay_offset_g": self.imu_ay_offset_g,
+            "imu_az_offset_g": self.imu_az_offset_g,
+            "imu_gx_offset_dps": self.imu_gx_offset_dps,
+            "imu_gy_offset_dps": self.imu_gy_offset_dps,
+            "imu_gz_offset_dps": self.imu_gz_offset_dps,
+            "imu_hx_offset": self.imu_hx_offset,
+            "imu_hy_offset": self.imu_hy_offset,
+            "imu_hz_offset": self.imu_hz_offset,
             "pan_id": self.pan_id,
             "tilt_id": self.tilt_id,
             "move_time_ms": self.move_time_ms,
@@ -620,6 +670,16 @@ class CircleTrackerGUI:
                 "baudrate": int(self.baudrate.get()),
                 "imu_port": self.imu_port.get(),
                 "imu_baudrate": int(self.imu_baudrate.get()),
+                "imu_output_hz": int(self.imu_output_hz.get()),
+                "imu_ax_offset_g": float(self.imu_ax_offset_g.get()),
+                "imu_ay_offset_g": float(self.imu_ay_offset_g.get()),
+                "imu_az_offset_g": float(self.imu_az_offset_g.get()),
+                "imu_gx_offset_dps": float(self.imu_gx_offset_dps.get()),
+                "imu_gy_offset_dps": float(self.imu_gy_offset_dps.get()),
+                "imu_gz_offset_dps": float(self.imu_gz_offset_dps.get()),
+                "imu_hx_offset": int(self.imu_hx_offset.get()),
+                "imu_hy_offset": int(self.imu_hy_offset.get()),
+                "imu_hz_offset": int(self.imu_hz_offset.get()),
                 "pan_id": int(self.pan_id.get()),
                 "tilt_id": int(self.tilt_id.get()),
                 "move_time_ms": int(self.move_time_ms.get()),
@@ -687,6 +747,16 @@ class CircleTrackerGUI:
             self.baudrate,
             self.imu_port,
             self.imu_baudrate,
+            self.imu_output_hz,
+            self.imu_ax_offset_g,
+            self.imu_ay_offset_g,
+            self.imu_az_offset_g,
+            self.imu_gx_offset_dps,
+            self.imu_gy_offset_dps,
+            self.imu_gz_offset_dps,
+            self.imu_hx_offset,
+            self.imu_hy_offset,
+            self.imu_hz_offset,
             self.pan_id,
             self.tilt_id,
             self.move_time_ms,
@@ -827,17 +897,22 @@ class CircleTrackerGUI:
         ttk.Entry(imu_frame, textvariable=self.imu_port, width=14).grid(row=0, column=1, sticky="ew", padx=5)
         ttk.Label(imu_frame, text="波特率:").grid(row=0, column=2, sticky="e")
         ttk.Entry(imu_frame, textvariable=self.imu_baudrate, width=10).grid(row=0, column=3, sticky="ew", padx=5)
-        ttk.Label(imu_frame, text="Pitch增益:").grid(row=1, column=0, sticky="e")
-        ttk.Entry(imu_frame, textvariable=self.stab_gain_pitch, width=10).grid(row=1, column=1, sticky="w", padx=5)
-        ttk.Label(imu_frame, text="Yaw增益:").grid(row=1, column=2, sticky="e")
-        ttk.Entry(imu_frame, textvariable=self.stab_gain_yaw, width=10).grid(row=1, column=3, sticky="w", padx=5)
-        ttk.Button(imu_frame, text="IMU置零", command=self._zero_imu).grid(row=2, column=0, sticky="ew", pady=(8, 0))
-        ttk.Label(imu_frame, text="Pitch:").grid(row=2, column=1, sticky="e", pady=(8, 0))
-        ttk.Label(imu_frame, textvariable=self.imu_status_pitch).grid(row=2, column=2, sticky="w", pady=(8, 0))
-        ttk.Label(imu_frame, text="Yaw:").grid(row=3, column=1, sticky="e")
-        ttk.Label(imu_frame, textvariable=self.imu_status_yaw).grid(row=3, column=2, sticky="w")
-        ttk.Label(imu_frame, text="Age:").grid(row=3, column=0, sticky="e")
-        ttk.Label(imu_frame, textvariable=self.imu_status_age).grid(row=3, column=3, sticky="w")
+        ttk.Label(imu_frame, text="输出Hz:").grid(row=1, column=0, sticky="e")
+        ttk.Entry(imu_frame, textvariable=self.imu_output_hz, width=10).grid(row=1, column=1, sticky="w", padx=5)
+        ttk.Button(imu_frame, text="应用输出", command=self._apply_imu_output_rate).grid(row=1, column=2, sticky="ew", padx=(0, 5))
+        ttk.Button(imu_frame, text="应用波特率", command=self._apply_imu_baudrate).grid(row=1, column=3, sticky="ew")
+        ttk.Label(imu_frame, text="Pitch增益:").grid(row=2, column=0, sticky="e")
+        ttk.Entry(imu_frame, textvariable=self.stab_gain_pitch, width=10).grid(row=2, column=1, sticky="w", padx=5)
+        ttk.Label(imu_frame, text="Yaw增益:").grid(row=2, column=2, sticky="e")
+        ttk.Entry(imu_frame, textvariable=self.stab_gain_yaw, width=10).grid(row=2, column=3, sticky="w", padx=5)
+        ttk.Button(imu_frame, text="IMU置零", command=self._zero_imu).grid(row=3, column=0, sticky="ew", pady=(8, 0))
+        ttk.Button(imu_frame, text="零偏设置", command=self._open_imu_offsets_dialog).grid(row=3, column=1, sticky="ew", pady=(8, 0), padx=(5, 0))
+        ttk.Label(imu_frame, text="Pitch:").grid(row=3, column=2, sticky="e", pady=(8, 0))
+        ttk.Label(imu_frame, textvariable=self.imu_status_pitch).grid(row=3, column=3, sticky="w", pady=(8, 0))
+        ttk.Label(imu_frame, text="Yaw:").grid(row=4, column=2, sticky="e")
+        ttk.Label(imu_frame, textvariable=self.imu_status_yaw).grid(row=4, column=3, sticky="w")
+        ttk.Label(imu_frame, text="Age:").grid(row=4, column=0, sticky="e")
+        ttk.Label(imu_frame, textvariable=self.imu_status_age).grid(row=4, column=1, sticky="w")
 
         pid_cols = ttk.Frame(tab_pid)
         pid_cols.pack(fill=tk.BOTH, expand=True)
@@ -1744,6 +1819,8 @@ class CircleTrackerGUI:
         )
         try:
             self.imu.configure_output(output_mask=0x000E, rate_code=0x08)
+            hz = int(settings.get("imu_output_hz", self.imu_output_hz.get()))
+            self.imu.set_output_rate_hz(hz)
         except Exception:
             pass
         self.imu.start()
@@ -1764,22 +1841,96 @@ class CircleTrackerGUI:
             self.worker_error = str(exc)
             self.status_text.set(f"IMU错误: {exc}")
             return
-        deadline = time.time() + 1.0
-        state = None
-        while time.time() < deadline:
+        deadline = time.time() + 1.5
+        pitches = []
+        yaw_sin = 0.0
+        yaw_cos = 0.0
+        while time.time() < deadline and len(pitches) < 40:
             try:
                 state = self.imu.get_state()
-                if state.last_update > 0:
-                    break
+                if state.last_update <= 0:
+                    time.sleep(0.02)
+                    continue
+                pitches.append(float(state.pitch_deg))
+                yaw_rad = math.radians(float(state.yaw_deg))
+                yaw_sin += math.sin(yaw_rad)
+                yaw_cos += math.cos(yaw_rad)
             except Exception:
-                state = None
+                pass
             time.sleep(0.02)
-        if state is None:
+        if len(pitches) < 5:
             self.status_text.set("IMU置零失败: 无数据")
             return
-        self.imu_zero_pitch = float(state.pitch_deg)
-        self.imu_zero_yaw = float(state.yaw_deg)
-        self.status_text.set("IMU已置零")
+        self.imu_zero_pitch = float(sum(pitches) / len(pitches))
+        self.imu_zero_yaw = float(math.degrees(math.atan2(yaw_sin, yaw_cos)))
+        self.status_text.set("IMU已置零(平均)")
+
+    def _apply_imu_output_rate(self):
+        try:
+            self._ensure_imu()
+            hz = int(self.imu_output_hz.get())
+            self.imu.set_output_rate_hz(hz)
+            self.status_text.set(f"IMU输出速率已设置为 {hz}Hz")
+        except Exception as exc:
+            self.worker_error = str(exc)
+            self.status_text.set(f"IMU配置失败: {exc}")
+
+    def _apply_imu_baudrate(self):
+        try:
+            self._ensure_imu()
+            baud = int(self.imu_baudrate.get())
+            self.imu.apply_baudrate(baud)
+            self.status_text.set(f"IMU波特率已设置为 {baud}")
+        except Exception as exc:
+            self.worker_error = str(exc)
+            self.status_text.set(f"IMU配置失败: {exc}")
+
+    def _apply_imu_offsets(self):
+        try:
+            self._ensure_imu()
+            self.imu.set_sensor_offsets(
+                ax_g=float(self.imu_ax_offset_g.get()),
+                ay_g=float(self.imu_ay_offset_g.get()),
+                az_g=float(self.imu_az_offset_g.get()),
+                gx_dps=float(self.imu_gx_offset_dps.get()),
+                gy_dps=float(self.imu_gy_offset_dps.get()),
+                gz_dps=float(self.imu_gz_offset_dps.get()),
+                hx=int(self.imu_hx_offset.get()),
+                hy=int(self.imu_hy_offset.get()),
+                hz=int(self.imu_hz_offset.get()),
+            )
+            self.status_text.set("IMU零偏已写入并保存")
+        except Exception as exc:
+            self.worker_error = str(exc)
+            self.status_text.set(f"IMU零偏写入失败: {exc}")
+
+    def _open_imu_offsets_dialog(self):
+        win = tk.Toplevel(self.root)
+        win.title("IMU 零偏设置")
+        win.transient(self.root)
+        win.grab_set()
+        frame = ttk.Frame(win, padding=10)
+        frame.pack(fill=tk.BOTH, expand=True)
+        labels = [
+            ("AX(g)", self.imu_ax_offset_g),
+            ("AY(g)", self.imu_ay_offset_g),
+            ("AZ(g)", self.imu_az_offset_g),
+            ("GX(dps)", self.imu_gx_offset_dps),
+            ("GY(dps)", self.imu_gy_offset_dps),
+            ("GZ(dps)", self.imu_gz_offset_dps),
+            ("HX", self.imu_hx_offset),
+            ("HY", self.imu_hy_offset),
+            ("HZ", self.imu_hz_offset),
+        ]
+        for i, (name, var) in enumerate(labels):
+            ttk.Label(frame, text=name).grid(row=i, column=0, sticky="e", padx=(0, 8), pady=3)
+            ttk.Entry(frame, textvariable=var, width=14).grid(row=i, column=1, sticky="w", pady=3)
+        btns = ttk.Frame(frame)
+        btns.grid(row=len(labels), column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        btns.columnconfigure(0, weight=1)
+        btns.columnconfigure(1, weight=1)
+        ttk.Button(btns, text="写入零偏", command=self._apply_imu_offsets).grid(row=0, column=0, sticky="ew")
+        ttk.Button(btns, text="关闭", command=win.destroy).grid(row=0, column=1, sticky="ew", padx=(8, 0))
 
     def _load_board_modules(self):
         if self._board_transport_cls is not None and self._board_driver_cls is not None:

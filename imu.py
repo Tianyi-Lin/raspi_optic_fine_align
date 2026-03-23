@@ -14,6 +14,13 @@ def _to_int16(lo: int, hi: int) -> int:
     return v
 
 
+def _to_uint16_from_int16(v: int) -> int:
+    v = int(v)
+    if v < 0:
+        v += 65536
+    return v & 0xFFFF
+
+
 @dataclass
 class ImuState:
     acc_x_g: float = 0.0
@@ -56,6 +63,9 @@ class IMUReader:
         self._lock = threading.Lock()
         self._running = False
         self._thread = None
+        self._port = port
+        self._baudrate = baudrate
+        self._timeout = timeout
 
     # ---------------------------
     # 协议工具
@@ -147,6 +157,7 @@ class IMUReader:
         """
         写寄存器格式: FF AA ADDR DATAL DATAH
         """
+        value = int(value) & 0xFFFF
         pkt = bytes([0xFF, 0xAA, addr & 0xFF, value & 0xFF, (value >> 8) & 0xFF])
         if self.debug:
             print("[IMU TX]", pkt.hex(" "))
@@ -184,6 +195,95 @@ class IMUReader:
 
         # SAVE = 保存
         self.write_reg(0x00, 0x0000)
+
+    BAUD_CODE_TO_BAUD = {
+        0x01: 4800,
+        0x02: 9600,
+        0x03: 19200,
+        0x04: 38400,
+        0x05: 57600,
+        0x06: 115200,
+        0x07: 230400,
+        0x08: 460800,
+        0x09: 921600,
+    }
+
+    BAUD_TO_BAUD_CODE = {v: k for k, v in BAUD_CODE_TO_BAUD.items()}
+
+    RRATE_CODE_TO_HZ = {
+        0x06: 10,
+        0x07: 20,
+        0x08: 50,
+        0x09: 100,
+        0x0B: 200,
+    }
+
+    RRATE_HZ_TO_CODE = {v: k for k, v in RRATE_CODE_TO_HZ.items()}
+
+    def set_output_rate_hz(self, hz: int):
+        hz = int(hz)
+        if hz not in self.RRATE_HZ_TO_CODE:
+            raise ValueError(f"unsupported output rate hz={hz}, supported={sorted(self.RRATE_HZ_TO_CODE.keys())}")
+        self.unlock()
+        self.write_reg(0x03, int(self.RRATE_HZ_TO_CODE[hz]))
+        self.write_reg(0x00, 0x0000)
+        time.sleep(0.1)
+
+    def apply_baudrate(self, baudrate: int):
+        baudrate = int(baudrate)
+        if baudrate not in self.BAUD_TO_BAUD_CODE:
+            raise ValueError(f"unsupported baudrate={baudrate}, supported={sorted(self.BAUD_TO_BAUD_CODE.keys())}")
+        code = int(self.BAUD_TO_BAUD_CODE[baudrate])
+        self.unlock()
+        self.write_reg(0x04, code)
+        self.write_reg(0x00, 0x0000)
+        time.sleep(0.1)
+        self.reopen(baudrate=baudrate)
+
+    def set_sensor_offsets(
+        self,
+        *,
+        ax_g: float = 0.0,
+        ay_g: float = 0.0,
+        az_g: float = 0.0,
+        gx_dps: float = 0.0,
+        gy_dps: float = 0.0,
+        gz_dps: float = 0.0,
+        hx: int = 0,
+        hy: int = 0,
+        hz: int = 0,
+    ):
+        values = [
+            int(round(float(ax_g) * 10000.0)),
+            int(round(float(ay_g) * 10000.0)),
+            int(round(float(az_g) * 10000.0)),
+            int(round(float(gx_dps) * 10000.0)),
+            int(round(float(gy_dps) * 10000.0)),
+            int(round(float(gz_dps) * 10000.0)),
+            int(hx),
+            int(hy),
+            int(hz),
+        ]
+        addrs = list(range(0x05, 0x0E))
+        self.unlock()
+        for addr, v in zip(addrs, values):
+            self.write_reg(addr, _to_uint16_from_int16(v))
+            time.sleep(0.06)
+        self.write_reg(0x00, 0x0000)
+        time.sleep(0.1)
+
+    def reopen(self, *, baudrate: Optional[int] = None):
+        self.stop()
+        try:
+            if self.ser and self.ser.is_open:
+                self.ser.close()
+        except Exception:
+            pass
+        if baudrate is not None:
+            self._baudrate = int(baudrate)
+        self.ser = serial.Serial(self._port, baudrate=self._baudrate, timeout=self._timeout)
+        self.buf = bytearray()
+        self.start()
 
     # ---------------------------
     # 读取线程
