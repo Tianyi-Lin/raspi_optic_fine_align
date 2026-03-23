@@ -17,6 +17,7 @@ from picamera2 import Picamera2, Preview
 from PID import PID
 from laser_ranger_passive import LaserRangerQueryMonitor
 from laser_ranger_setting import configure_laser_module
+from imu import IMUReader
 
 
 def _load_module(name, path):
@@ -126,6 +127,10 @@ class CircleTrackerGUI:
         self.picam2 = None
         self.servo = None
         self.laser_ranger = None  # 激光测距模块
+        self.imu = None
+        self.imu_zero_pitch = 0.0
+        self.imu_zero_yaw = 0.0
+        self.latest_imu = None
         self.worker_thread = None
         self.detect_thread = None
         self.stop_event = threading.Event()
@@ -154,6 +159,9 @@ class CircleTrackerGUI:
         self.servo_status_pan = tk.StringVar(value="-")
         self.servo_status_tilt = tk.StringVar(value="-")
         self.servo_status_voltage = tk.StringVar(value="-")
+        self.imu_status_pitch = tk.StringVar(value="-")
+        self.imu_status_yaw = tk.StringVar(value="-")
+        self.imu_status_age = tk.StringVar(value="-")
         self.latest_servo_status = None
         self.last_servo_status_time = 0.0
         self._board_transport_cls = None
@@ -163,6 +171,8 @@ class CircleTrackerGUI:
         self.port = tk.StringVar(value="/dev/ttyAMA1")
         # self.baudrate = tk.IntVar(value=115200)
         self.baudrate = tk.IntVar(value=9600)
+        self.imu_port = tk.StringVar(value="/dev/ttyAMA2")
+        self.imu_baudrate = tk.IntVar(value=9600)
         self.pan_id = tk.IntVar(value=1)
         self.tilt_id = tk.IntVar(value=2)
         self.move_time_ms = tk.IntVar(value=40)
@@ -191,6 +201,10 @@ class CircleTrackerGUI:
         self.y_bias = tk.IntVar(value=0)
         self.camera_fps = tk.IntVar(value=60)
         self.status_text = tk.StringVar(value="就绪")
+
+        self.auto_stabilize = tk.BooleanVar(value=False)
+        self.stab_gain_pitch = tk.DoubleVar(value=1.0)
+        self.stab_gain_yaw = tk.DoubleVar(value=1.0)
         
         # 激光指示对准配置
         self.laser_align_mode = tk.BooleanVar(value=False) # False:盲对准, True:指示对准
@@ -272,6 +286,12 @@ class CircleTrackerGUI:
             # 在启动前设置模式，确保 _ensure_servo 使用正确的类
             self.servo_mode.set(fallback_mode)
             self._ensure_servo()
+
+            try:
+                self._ensure_imu()
+                self._zero_imu()
+            except Exception as exc:
+                print(f"[WARNING] IMU init/zero failed before GUI start: {exc}")
         except Exception as exc:
             import traceback
             traceback.print_exc()
@@ -294,6 +314,8 @@ class CircleTrackerGUI:
         fallback = {
             "servo_mode": "控制板",
             "baudrate": 9600,
+            "imu_port": "/dev/ttyAMA2",
+            "imu_baudrate": 9600,
             "pan_id": 1,
             "tilt_id": 2,
             "move_time_ms": 40,
@@ -329,6 +351,9 @@ class CircleTrackerGUI:
             "hw_tilt_max": 90.0,
             "kalman_process_noise": 0.03,
             "kalman_measurement_noise": 0.4,
+            "auto_stabilize": False,
+            "stab_gain_pitch": 1.0,
+            "stab_gain_yaw": 1.0,
         }
         def safe_int(var, key):
             try:
@@ -355,6 +380,8 @@ class CircleTrackerGUI:
                 "port": self.port.get(),
                 "servo_mode": self.servo_mode.get(),
                 "baudrate": safe_int(self.baudrate, "baudrate"),
+                "imu_port": str(self.imu_port.get()),
+                "imu_baudrate": safe_int(self.imu_baudrate, "imu_baudrate"),
                 "pan_id": safe_int(self.pan_id, "pan_id"),
                 "tilt_id": safe_int(self.tilt_id, "tilt_id"),
                 "move_time_ms": safe_int(self.move_time_ms, "move_time_ms"),
@@ -390,6 +417,9 @@ class CircleTrackerGUI:
             "tilt_max": safe_float(self.tilt_max, "tilt_max"),
             "kalman_process_noise": safe_float(self.kalman_process_noise, "kalman_process_noise"),
             "kalman_measurement_noise": safe_float(self.kalman_measurement_noise, "kalman_measurement_noise"),
+                "auto_stabilize": safe_bool(self.auto_stabilize),
+                "stab_gain_pitch": safe_float(self.stab_gain_pitch, "stab_gain_pitch"),
+                "stab_gain_yaw": safe_float(self.stab_gain_yaw, "stab_gain_yaw"),
         }
 
     def _get_settings(self):
@@ -398,6 +428,8 @@ class CircleTrackerGUI:
             "servo_mode": "控制板",
             "port": "/dev/ttyAMA1",
             "baudrate": 9600,
+            "imu_port": "/dev/ttyAMA2",
+            "imu_baudrate": 9600,
             "pan_id": 1,
             "tilt_id": 2,
             "move_time_ms": 40,
@@ -430,6 +462,9 @@ class CircleTrackerGUI:
             "tilt_max": 90.0,
             "kalman_process_noise": 0.03,
             "kalman_measurement_noise": 0.4,
+            "auto_stabilize": False,
+            "stab_gain_pitch": 1.0,
+            "stab_gain_yaw": 1.0,
         }
         def safe_int(var, key):
             try:
@@ -452,6 +487,8 @@ class CircleTrackerGUI:
             "servo_mode": str(self.servo_mode.get()) if self.servo_mode.get() else defaults["servo_mode"],
             "port": str(self.port.get()) if self.port.get() else defaults["port"],
             "baudrate": safe_int(self.baudrate, "baudrate"),
+            "imu_port": str(self.imu_port.get()) if self.imu_port.get() else defaults["imu_port"],
+            "imu_baudrate": safe_int(self.imu_baudrate, "imu_baudrate"),
             "pan_id": safe_int(self.pan_id, "pan_id"),
             "tilt_id": safe_int(self.tilt_id, "tilt_id"),
             "move_time_ms": safe_int(self.move_time_ms, "move_time_ms"),
@@ -487,6 +524,9 @@ class CircleTrackerGUI:
             "tilt_max": safe_float(self.tilt_max, "tilt_max"),
             "kalman_process_noise": safe_float(self.kalman_process_noise, "kalman_process_noise"),
             "kalman_measurement_noise": safe_float(self.kalman_measurement_noise, "kalman_measurement_noise"),
+            "auto_stabilize": safe_bool(self.auto_stabilize, "auto_stabilize"),
+            "stab_gain_pitch": safe_float(self.stab_gain_pitch, "stab_gain_pitch"),
+            "stab_gain_yaw": safe_float(self.stab_gain_yaw, "stab_gain_yaw"),
             "hw_pan_min": safe_float(self.hw_pan_min, "hw_pan_min"),
             "hw_pan_max": safe_float(self.hw_pan_max, "hw_pan_max"),
             "hw_tilt_min": safe_float(self.hw_tilt_min, "hw_tilt_min"),
@@ -510,6 +550,8 @@ class CircleTrackerGUI:
             "servo_mode": self.servo_mode,
             "port": self.port,
             "baudrate": self.baudrate,
+            "imu_port": self.imu_port,
+            "imu_baudrate": self.imu_baudrate,
             "pan_id": self.pan_id,
             "tilt_id": self.tilt_id,
             "move_time_ms": self.move_time_ms,
@@ -542,6 +584,9 @@ class CircleTrackerGUI:
             "tilt_max": self.tilt_max,
             "kalman_process_noise": self.kalman_process_noise,
             "kalman_measurement_noise": self.kalman_measurement_noise,
+            "auto_stabilize": self.auto_stabilize,
+            "stab_gain_pitch": self.stab_gain_pitch,
+            "stab_gain_yaw": self.stab_gain_yaw,
         }
         for key, var in var_map.items():
             if key not in data:
@@ -568,6 +613,8 @@ class CircleTrackerGUI:
                 "servo_mode": self.servo_mode.get(),
                 "port": self.port.get(),
                 "baudrate": int(self.baudrate.get()),
+                "imu_port": self.imu_port.get(),
+                "imu_baudrate": int(self.imu_baudrate.get()),
                 "pan_id": int(self.pan_id.get()),
                 "tilt_id": int(self.tilt_id.get()),
                 "move_time_ms": int(self.move_time_ms.get()),
@@ -603,6 +650,9 @@ class CircleTrackerGUI:
                 "tilt_max": float(self.tilt_max.get()),
                 "kalman_process_noise": float(self.kalman_process_noise.get()),
                 "kalman_measurement_noise": float(self.kalman_measurement_noise.get()),
+                "auto_stabilize": bool(self.auto_stabilize.get()),
+                "stab_gain_pitch": float(self.stab_gain_pitch.get()),
+                "stab_gain_yaw": float(self.stab_gain_yaw.get()),
             }
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
@@ -658,6 +708,7 @@ class CircleTrackerGUI:
         ttk.Checkbutton(tab_basic, text="启用跟踪", variable=self.track_enabled).grid(row=r, column=0, sticky="w", pady=(6, 0))
         ttk.Checkbutton(tab_basic, text="启用水平", variable=self.pan_enabled).grid(row=r, column=1, sticky="w", pady=(6, 0))
         ttk.Checkbutton(tab_basic, text="启用俯仰", variable=self.tilt_enabled).grid(row=r, column=2, sticky="w", pady=(6, 0))
+        ttk.Checkbutton(tab_basic, text="自动稳定", variable=self.auto_stabilize).grid(row=r, column=3, sticky="w", pady=(6, 0))
         r += 1
         btns = ttk.Frame(tab_basic)
         btns.grid(row=r, column=0, columnspan=4, sticky="ew", pady=(10, 0))
@@ -675,9 +726,9 @@ class CircleTrackerGUI:
         for c in range(3):
             jog.columnconfigure(c, weight=1)
         ttk.Button(jog, text="上", command=lambda: self._jog(0.0, +self.jog_step_deg.get())).grid(row=0, column=1, sticky="ew")
-        ttk.Button(jog, text="左", command=lambda: self._jog(-self.jog_step_deg.get(), 0.0)).grid(row=1, column=0, sticky="ew", pady=(6, 0))
+        ttk.Button(jog, text="左", command=lambda: self._jog(+self.jog_step_deg.get(), 0.0)).grid(row=1, column=0, sticky="ew", pady=(6, 0))
         ttk.Button(jog, text="下", command=lambda: self._jog(0.0, -self.jog_step_deg.get())).grid(row=1, column=1, sticky="ew", pady=(6, 0))
-        ttk.Button(jog, text="右", command=lambda: self._jog(+self.jog_step_deg.get(), 0.0)).grid(row=1, column=2, sticky="ew", pady=(6, 0))
+        ttk.Button(jog, text="右", command=lambda: self._jog(-self.jog_step_deg.get(), 0.0)).grid(row=1, column=2, sticky="ew", pady=(6, 0))
 
         status_frame = ttk.LabelFrame(tab_basic, text="舵机状态", padding=8)
         status_frame.grid(row=r + 2, column=0, columnspan=4, sticky="ew", pady=(10, 0))
@@ -691,6 +742,26 @@ class CircleTrackerGUI:
         ttk.Label(status_frame, textvariable=self.servo_status_tilt).grid(row=1, column=1, sticky="w", padx=5)
         ttk.Label(status_frame, text="电压:").grid(row=1, column=2, sticky="e")
         ttk.Label(status_frame, textvariable=self.servo_status_voltage).grid(row=1, column=3, sticky="w", padx=5)
+
+        imu_frame = ttk.LabelFrame(tab_basic, text="IMU稳定", padding=8)
+        imu_frame.grid(row=r + 3, column=0, columnspan=4, sticky="ew", pady=(10, 0))
+        imu_frame.columnconfigure(1, weight=1)
+        imu_frame.columnconfigure(3, weight=1)
+        ttk.Label(imu_frame, text="IMU串口:").grid(row=0, column=0, sticky="e")
+        ttk.Entry(imu_frame, textvariable=self.imu_port, width=14).grid(row=0, column=1, sticky="ew", padx=5)
+        ttk.Label(imu_frame, text="波特率:").grid(row=0, column=2, sticky="e")
+        ttk.Entry(imu_frame, textvariable=self.imu_baudrate, width=10).grid(row=0, column=3, sticky="ew", padx=5)
+        ttk.Label(imu_frame, text="Pitch增益:").grid(row=1, column=0, sticky="e")
+        ttk.Entry(imu_frame, textvariable=self.stab_gain_pitch, width=10).grid(row=1, column=1, sticky="w", padx=5)
+        ttk.Label(imu_frame, text="Yaw增益:").grid(row=1, column=2, sticky="e")
+        ttk.Entry(imu_frame, textvariable=self.stab_gain_yaw, width=10).grid(row=1, column=3, sticky="w", padx=5)
+        ttk.Button(imu_frame, text="IMU置零", command=self._zero_imu).grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        ttk.Label(imu_frame, text="Pitch:").grid(row=2, column=1, sticky="e", pady=(8, 0))
+        ttk.Label(imu_frame, textvariable=self.imu_status_pitch).grid(row=2, column=2, sticky="w", pady=(8, 0))
+        ttk.Label(imu_frame, text="Yaw:").grid(row=3, column=1, sticky="e")
+        ttk.Label(imu_frame, textvariable=self.imu_status_yaw).grid(row=3, column=2, sticky="w")
+        ttk.Label(imu_frame, text="Age:").grid(row=3, column=0, sticky="e")
+        ttk.Label(imu_frame, textvariable=self.imu_status_age).grid(row=3, column=3, sticky="w")
 
         pid_cols = ttk.Frame(tab_pid)
         pid_cols.pack(fill=tk.BOTH, expand=True)
@@ -1095,7 +1166,8 @@ class CircleTrackerGUI:
                 max_step = float(s["max_delta_deg_per_sec"]) * dt
 
                 do_track = self.tracking_active
-                if do_track:
+                do_stab = bool(s.get("auto_stabilize", False))
+                if do_track or do_stab:
                     try:
                         # 每次循环都同步角度范围到舵机驱动层（确保GUI修改立即生效）
                         self._ensure_servo()
@@ -1103,6 +1175,23 @@ class CircleTrackerGUI:
                         self.worker_error = str(exc)
                         self.stop_event.set()
                         break
+
+                stab_pan = 0.0
+                stab_tilt = 0.0
+                if do_stab:
+                    try:
+                        self._ensure_imu()
+                        imu_state = self.imu.get_state() if self.imu is not None else None
+                    except Exception as exc:
+                        self.worker_error = f"IMU read failed: {exc}"
+                        self.stop_event.set()
+                        break
+                    if imu_state is not None and imu_state.last_update > 0:
+                        pitch_err = self._angle_diff_deg(imu_state.pitch_deg, self.imu_zero_pitch)
+                        yaw_err = self._angle_diff_deg(imu_state.yaw_deg, self.imu_zero_yaw)
+                        stab_tilt = -pitch_err * float(s.get("stab_gain_pitch", 1.0))
+                        stab_pan = -yaw_err * float(s.get("stab_gain_yaw", 1.0))
+                        self.latest_imu = (float(imu_state.pitch_deg), float(imu_state.yaw_deg), float(time.time() - imu_state.last_update))
                 # 使用GUI配置和硬件物理边界的交集作为最终限制
                 # max(硬件最小, GUI最小) 和 min(硬件最大, GUI最大)
                 pan_min = max(float(s.get("hw_pan_min", -90.0)), float(s.get("pan_min", -90.0)))
@@ -1149,11 +1238,19 @@ class CircleTrackerGUI:
                 tilt_at_min = self.current_tilt_angle <= tilt_min
                 tilt_at_max = self.current_tilt_angle >= tilt_max
 
-                if do_track and (s["pan_enabled"] or s["tilt_enabled"]):
+                if (do_track and (s["pan_enabled"] or s["tilt_enabled"])) or do_stab:
+                    out_pan = self.current_pan_angle
+                    out_tilt = self.current_tilt_angle
+                    if s["pan_enabled"]:
+                        out_pan = out_pan + stab_pan
+                    if s["tilt_enabled"]:
+                        out_tilt = out_tilt + stab_tilt
+                    out_pan = max(pan_min, min(pan_max, out_pan))
+                    out_tilt = max(tilt_min, min(tilt_max, out_tilt))
                     self.servo.set_angles(
                         [
-                            (self.active_pan_id, self.current_pan_angle),
-                            (self.active_tilt_id, self.current_tilt_angle),
+                            (self.active_pan_id, out_pan),
+                            (self.active_tilt_id, out_tilt),
                         ]
                     )
                     self.servo.move_angle(wait=False)
@@ -1445,6 +1542,17 @@ class CircleTrackerGUI:
                 self.fps_ctrl = 1.0 / dt
                 
             status_msg = f"相机FPS={self.fps_cam:.1f}  控制Hz={self.fps_ctrl:.1f}  水平={pan:.2f}  俯仰={tilt:.2f}  误差X={error_x:.1f}  误差Y={error_y:.1f}  圆={int(circle_found)}  半径={radius}  跟踪={int(do_track)}"
+            imu_snapshot = self.latest_imu
+            if imu_snapshot is not None:
+                pitch_deg, yaw_deg, age_sec = imu_snapshot
+                self.imu_status_pitch.set(f"{pitch_deg:+.2f}")
+                self.imu_status_yaw.set(f"{yaw_deg:+.2f}")
+                self.imu_status_age.set(f"{age_sec:.2f}s")
+                status_msg += f"  稳定={int(self.auto_stabilize.get())}  IMU(pitch={pitch_deg:+.1f}, yaw={yaw_deg:+.1f})"
+            else:
+                self.imu_status_pitch.set("-")
+                self.imu_status_yaw.set("-")
+                self.imu_status_age.set("-")
             if self.laser_align_mode.get():
                 if laser_locked:
                     status_msg += "  [指示对准: 已锁定光斑]"
@@ -1538,6 +1646,64 @@ class CircleTrackerGUI:
         self.last_exposure = None
         self.last_gain = None
         self.last_fps = framerate
+
+    @staticmethod
+    def _angle_diff_deg(a, b):
+        d = float(a) - float(b)
+        while d > 180.0:
+            d -= 360.0
+        while d < -180.0:
+            d += 360.0
+        return d
+
+    def _ensure_imu(self):
+        if self.imu is not None:
+            return
+        settings = self._get_settings()
+        self.imu = IMUReader(
+            port=settings.get("imu_port", self.imu_port.get()),
+            baudrate=int(settings.get("imu_baudrate", self.imu_baudrate.get())),
+            timeout=0.1,
+            debug=False,
+        )
+        try:
+            self.imu.configure_output(output_mask=0x000E, rate_code=0x08)
+        except Exception:
+            pass
+        self.imu.start()
+
+    def _close_imu(self):
+        if self.imu is None:
+            return
+        try:
+            self.imu.close()
+        except Exception:
+            pass
+        self.imu = None
+
+    def _zero_imu(self):
+        try:
+            self._ensure_imu()
+        except Exception as exc:
+            self.worker_error = str(exc)
+            self.status_text.set(f"IMU错误: {exc}")
+            return
+        deadline = time.time() + 1.0
+        state = None
+        while time.time() < deadline:
+            try:
+                state = self.imu.get_state()
+                if state.last_update > 0:
+                    break
+            except Exception:
+                state = None
+            time.sleep(0.02)
+        if state is None:
+            self.status_text.set("IMU置零失败: 无数据")
+            return
+        self.imu_zero_pitch = float(state.pitch_deg)
+        self.imu_zero_yaw = float(state.yaw_deg)
+        self.status_text.set("IMU已置零")
 
     def _load_board_modules(self):
         if self._board_transport_cls is not None and self._board_driver_cls is not None:
@@ -1864,6 +2030,7 @@ class CircleTrackerGUI:
             except Exception:
                 pass
             self.laser_ranger = None
+        self._close_imu()
         self.root.destroy()
 
     def _jog(self, delta_pan, delta_tilt):
