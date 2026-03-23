@@ -987,6 +987,16 @@ class CircleTrackerGUI:
         self._grid_slider(servo_range, r3-1, 1, "水平最大", self.pan_max, 0.0, 90.0, colspan=1)
         r3 = self._grid_slider(servo_range, r3, 0, "俯仰最小", self.tilt_min, -90.0, 0.0, colspan=1)
         self._grid_slider(servo_range, r3-1, 1, "俯仰最大", self.tilt_max, 0.0, 90.0, colspan=1)
+        self.range_canvas_pan = tk.Canvas(servo_range, height=24, highlightthickness=1, highlightbackground="#cfcfcf")
+        self.range_canvas_pan.grid(row=r3, column=0, columnspan=2, sticky="ew", pady=(4, 2))
+        r3 += 1
+        self.range_canvas_tilt = tk.Canvas(servo_range, height=24, highlightthickness=1, highlightbackground="#cfcfcf")
+        self.range_canvas_tilt.grid(row=r3, column=0, columnspan=2, sticky="ew", pady=(2, 2))
+        r3 += 1
+        self.range_hint_var = tk.StringVar(value="")
+        ttk.Label(servo_range, textvariable=self.range_hint_var, foreground="gray").grid(
+            row=r3, column=0, columnspan=2, sticky="w", pady=(2, 0)
+        )
         
         # 硬件边界显示
         hw_range = ttk.LabelFrame(tab_pid, text="舵机物理边界 (硬件读取)", padding=8)
@@ -1020,6 +1030,50 @@ class CircleTrackerGUI:
         self.hw_tilt_min.trace_add("write", update_hw_labels)
         self.hw_tilt_max.trace_add("write", update_hw_labels)
         update_hw_labels()
+
+        def map_x(v, width):
+            left = 8
+            right = max(left + 1, width - 8)
+            return left + (float(v) + 90.0) / 180.0 * (right - left)
+
+        def draw_one(canvas, gui_min, gui_max, hw_min, hw_max):
+            w = max(120, canvas.winfo_width())
+            h = max(20, canvas.winfo_height())
+            y = h / 2.0
+            canvas.delete("all")
+            x0 = map_x(-90.0, w)
+            x1 = map_x(90.0, w)
+            canvas.create_line(x0, y, x1, y, fill="#bbbbbb", width=2)
+            ph0 = map_x(hw_min, w)
+            ph1 = map_x(hw_max, w)
+            canvas.create_line(ph0, y, ph1, y, fill="#2f7ed8", width=6)
+            gh0 = map_x(gui_min, w)
+            gh1 = map_x(gui_max, w)
+            canvas.create_line(gh0, y, gh1, y, fill="#25a75a", width=4)
+            ef0 = map_x(max(hw_min, gui_min), w)
+            ef1 = map_x(min(hw_max, gui_max), w)
+            canvas.create_line(ef0, y, ef1, y, fill="#e04f5f", width=2)
+
+        def update_range_visual(*_args):
+            pan_gui_min = float(self.pan_min.get())
+            pan_gui_max = float(self.pan_max.get())
+            tilt_gui_min = float(self.tilt_min.get())
+            tilt_gui_max = float(self.tilt_max.get())
+            pan_hw_min = float(self.hw_pan_min.get())
+            pan_hw_max = float(self.hw_pan_max.get())
+            tilt_hw_min = float(self.hw_tilt_min.get())
+            tilt_hw_max = float(self.hw_tilt_max.get())
+            draw_one(self.range_canvas_pan, pan_gui_min, pan_gui_max, pan_hw_min, pan_hw_max)
+            draw_one(self.range_canvas_tilt, tilt_gui_min, tilt_gui_max, tilt_hw_min, tilt_hw_max)
+            self.range_hint_var.set(
+                "蓝=物理范围  绿=GUI范围  红=最终生效范围(交集)"
+            )
+
+        for var in [self.pan_min, self.pan_max, self.tilt_min, self.tilt_max, self.hw_pan_min, self.hw_pan_max, self.hw_tilt_min, self.hw_tilt_max]:
+            var.trace_add("write", update_range_visual)
+        self.range_canvas_pan.bind("<Configure>", update_range_visual)
+        self.range_canvas_tilt.bind("<Configure>", update_range_visual)
+        update_range_visual()
 
         tab_vision.columnconfigure(0, weight=1)
         tab_vision.columnconfigure(1, weight=1)
@@ -1421,8 +1475,14 @@ class CircleTrackerGUI:
                     out_pan = self.current_pan_angle
                     out_tilt = self.current_tilt_angle
                     if s["pan_enabled"]:
+                        pan_comp_min = pan_min - out_pan
+                        pan_comp_max = pan_max - out_pan
+                        stab_pan = max(pan_comp_min, min(pan_comp_max, stab_pan))
                         out_pan = out_pan + stab_pan
                     if s["tilt_enabled"]:
+                        tilt_comp_min = tilt_min - out_tilt
+                        tilt_comp_max = tilt_max - out_tilt
+                        stab_tilt = max(tilt_comp_min, min(tilt_comp_max, stab_tilt))
                         out_tilt = out_tilt + stab_tilt
                     out_pan = max(pan_min, min(pan_max, out_pan))
                     out_tilt = max(tilt_min, min(tilt_max, out_tilt))
