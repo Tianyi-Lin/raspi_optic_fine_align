@@ -1431,6 +1431,14 @@ class CircleTrackerGUI:
                 pan_max = min(float(s.get("hw_pan_max", 90.0)), float(s.get("pan_max", 90.0)))
                 tilt_min = max(float(s.get("hw_tilt_min", -90.0)), float(s.get("tilt_min", -90.0)))
                 tilt_max = min(float(s.get("hw_tilt_max", 90.0)), float(s.get("tilt_max", 90.0)))
+                gui_pan_min = float(s.get("pan_min", -90.0))
+                gui_pan_max = float(s.get("pan_max", 90.0))
+                gui_tilt_min = float(s.get("tilt_min", -90.0))
+                gui_tilt_max = float(s.get("tilt_max", 90.0))
+                hw_pan_min = float(s.get("hw_pan_min", -90.0))
+                hw_pan_max = float(s.get("hw_pan_max", 90.0))
+                hw_tilt_min = float(s.get("hw_tilt_min", -90.0))
+                hw_tilt_max = float(s.get("hw_tilt_max", 90.0))
 
                 # 更新前检测是否已经在边界，用于限制PID方向
                 pan_at_min_before = self.current_pan_angle <= pan_min
@@ -1465,11 +1473,12 @@ class CircleTrackerGUI:
                     step_tilt = max(-max_step, min(max_step, desired_tilt - self.current_tilt_angle))
                     self.current_tilt_angle = max(tilt_min, min(tilt_max, self.current_tilt_angle + step_tilt))
 
-                # 更新后再次检测是否到达边界，用于视觉提示（消除延迟）
+                # 更新后的跟踪输出边界（不含IMU补偿）
                 pan_at_min = self.current_pan_angle <= pan_min
                 pan_at_max = self.current_pan_angle >= pan_max
                 tilt_at_min = self.current_tilt_angle <= tilt_min
                 tilt_at_max = self.current_tilt_angle >= tilt_max
+                bound_reason_msgs = []
 
                 if (do_track and (s["pan_enabled"] or s["tilt_enabled"])) or do_stab:
                     out_pan = self.current_pan_angle
@@ -1486,6 +1495,33 @@ class CircleTrackerGUI:
                         out_tilt = out_tilt + stab_tilt
                     out_pan = max(pan_min, min(pan_max, out_pan))
                     out_tilt = max(tilt_min, min(tilt_max, out_tilt))
+
+                    # 使用最终下发给舵机的角度计算边界提示，确保IMU稳定触发时也正确显示
+                    pan_at_min = out_pan <= pan_min
+                    pan_at_max = out_pan >= pan_max
+                    tilt_at_min = out_tilt <= tilt_min
+                    tilt_at_max = out_tilt >= tilt_max
+
+                    if pan_at_min:
+                        if gui_pan_min >= hw_pan_min:
+                            bound_reason_msgs.append("水平下限受GUI限制")
+                        else:
+                            bound_reason_msgs.append("水平下限受物理限制")
+                    if pan_at_max:
+                        if gui_pan_max <= hw_pan_max:
+                            bound_reason_msgs.append("水平上限受GUI限制")
+                        else:
+                            bound_reason_msgs.append("水平上限受物理限制")
+                    if tilt_at_min:
+                        if gui_tilt_min >= hw_tilt_min:
+                            bound_reason_msgs.append("俯仰下限受GUI限制")
+                        else:
+                            bound_reason_msgs.append("俯仰下限受物理限制")
+                    if tilt_at_max:
+                        if gui_tilt_max <= hw_tilt_max:
+                            bound_reason_msgs.append("俯仰上限受GUI限制")
+                        else:
+                            bound_reason_msgs.append("俯仰上限受物理限制")
                     self.servo.set_angles(
                         [
                             (self.active_pan_id, out_pan),
@@ -1547,6 +1583,7 @@ class CircleTrackerGUI:
                     (pred_x, pred_y),
                     laser_spot_display,
                     (pan_at_min, pan_at_max, tilt_at_min, tilt_at_max),
+                    " | ".join(bound_reason_msgs),
                     s.get("laser_threshold", 240),
                     deadband,
                     current_distance,
@@ -1664,6 +1701,7 @@ class CircleTrackerGUI:
                 (pred_x, pred_y),
                 laser_spot_display,
                 bounds,
+                bound_reason,
                 laser_threshold,
                 deadband,
                 current_distance,
@@ -1781,6 +1819,8 @@ class CircleTrackerGUI:
                 self.fps_ctrl = 1.0 / dt
                 
             status_msg = f"相机FPS={self.fps_cam:.1f}  控制Hz={self.fps_ctrl:.1f}  水平={pan:.2f}  俯仰={tilt:.2f}  误差X={error_x:.1f}  误差Y={error_y:.1f}  圆={int(circle_found)}  半径={radius}  跟踪={int(do_track)}"
+            if bound_reason:
+                status_msg += f"  超限:{bound_reason}"
             imu_snapshot = self.latest_imu
             if imu_snapshot is not None:
                 pitch_deg, yaw_deg, age_sec, pitch_delta, yaw_delta = imu_snapshot
