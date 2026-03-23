@@ -187,6 +187,7 @@ class CircleTrackerGUI:
         self.imu_hx_offset = tk.IntVar(value=0)
         self.imu_hy_offset = tk.IntVar(value=0)
         self.imu_hz_offset = tk.IntVar(value=0)
+        self.imu_az_reference_g = tk.DoubleVar(value=1.0)
         self.pan_id = tk.IntVar(value=1)
         self.tilt_id = tk.IntVar(value=2)
         self.move_time_ms = tk.IntVar(value=40)
@@ -411,6 +412,7 @@ class CircleTrackerGUI:
                 "imu_hx_offset": safe_int(self.imu_hx_offset, "imu_hx_offset"),
                 "imu_hy_offset": safe_int(self.imu_hy_offset, "imu_hy_offset"),
                 "imu_hz_offset": safe_int(self.imu_hz_offset, "imu_hz_offset"),
+                "imu_az_reference_g": safe_float(self.imu_az_reference_g, "imu_az_reference_g"),
                 "pan_id": safe_int(self.pan_id, "pan_id"),
                 "tilt_id": safe_int(self.tilt_id, "tilt_id"),
                 "move_time_ms": safe_int(self.move_time_ms, "move_time_ms"),
@@ -469,6 +471,7 @@ class CircleTrackerGUI:
             "imu_hx_offset": 0,
             "imu_hy_offset": 0,
             "imu_hz_offset": 0,
+            "imu_az_reference_g": 1.0,
             "pan_id": 1,
             "tilt_id": 2,
             "move_time_ms": 40,
@@ -538,6 +541,7 @@ class CircleTrackerGUI:
             "imu_hx_offset": safe_int(self.imu_hx_offset, "imu_hx_offset"),
             "imu_hy_offset": safe_int(self.imu_hy_offset, "imu_hy_offset"),
             "imu_hz_offset": safe_int(self.imu_hz_offset, "imu_hz_offset"),
+            "imu_az_reference_g": safe_float(self.imu_az_reference_g, "imu_az_reference_g"),
             "pan_id": safe_int(self.pan_id, "pan_id"),
             "tilt_id": safe_int(self.tilt_id, "tilt_id"),
             "move_time_ms": safe_int(self.move_time_ms, "move_time_ms"),
@@ -611,6 +615,7 @@ class CircleTrackerGUI:
             "imu_hx_offset": self.imu_hx_offset,
             "imu_hy_offset": self.imu_hy_offset,
             "imu_hz_offset": self.imu_hz_offset,
+            "imu_az_reference_g": self.imu_az_reference_g,
             "pan_id": self.pan_id,
             "tilt_id": self.tilt_id,
             "move_time_ms": self.move_time_ms,
@@ -684,6 +689,7 @@ class CircleTrackerGUI:
                 "imu_hx_offset": int(self.imu_hx_offset.get()),
                 "imu_hy_offset": int(self.imu_hy_offset.get()),
                 "imu_hz_offset": int(self.imu_hz_offset.get()),
+                "imu_az_reference_g": float(self.imu_az_reference_g.get()),
                 "pan_id": int(self.pan_id.get()),
                 "tilt_id": int(self.tilt_id.get()),
                 "move_time_ms": int(self.move_time_ms.get()),
@@ -761,6 +767,7 @@ class CircleTrackerGUI:
             self.imu_hx_offset,
             self.imu_hy_offset,
             self.imu_hz_offset,
+            self.imu_az_reference_g,
             self.pan_id,
             self.tilt_id,
             self.move_time_ms,
@@ -1918,6 +1925,15 @@ class CircleTrackerGUI:
     def _apply_imu_offsets(self):
         try:
             self._ensure_imu()
+            az_offset = float(self.imu_az_offset_g.get())
+            if abs(az_offset) > 0.30:
+                ok = messagebox.askyesno(
+                    "确认AZ零偏",
+                    f"当前 AZ(g) 零偏为 {az_offset:+.4f}g，绝对值较大。\n请确认你填写的是“相对理想值的误差”而不是直接去掉1g。\n仍然写入吗？",
+                )
+                if not ok:
+                    self.status_text.set("已取消写入IMU零偏")
+                    return
             self.imu.set_sensor_offsets(
                 ax_g=float(self.imu_ax_offset_g.get()),
                 ay_g=float(self.imu_ay_offset_g.get()),
@@ -1933,6 +1949,55 @@ class CircleTrackerGUI:
         except Exception as exc:
             self.worker_error = str(exc)
             self.status_text.set(f"IMU零偏写入失败: {exc}")
+
+    def _sample_fill_imu_offsets_flat(self):
+        try:
+            self._ensure_imu()
+        except Exception as exc:
+            self.worker_error = str(exc)
+            self.status_text.set(f"IMU错误: {exc}")
+            return
+        deadline = time.time() + 1.2
+        acc_x_vals = []
+        acc_y_vals = []
+        acc_z_vals = []
+        gyro_x_vals = []
+        gyro_y_vals = []
+        gyro_z_vals = []
+        while time.time() < deadline and len(acc_x_vals) < 50:
+            try:
+                s = self.imu.get_state()
+                if s.last_update <= 0:
+                    time.sleep(0.01)
+                    continue
+                acc_x_vals.append(float(s.acc_x_g))
+                acc_y_vals.append(float(s.acc_y_g))
+                acc_z_vals.append(float(s.acc_z_g))
+                gyro_x_vals.append(float(s.gyro_x_dps))
+                gyro_y_vals.append(float(s.gyro_y_dps))
+                gyro_z_vals.append(float(s.gyro_z_dps))
+            except Exception:
+                pass
+            time.sleep(0.02)
+        if len(acc_x_vals) < 10:
+            self.status_text.set("静置采样失败: IMU数据不足")
+            return
+        mean_ax = sum(acc_x_vals) / len(acc_x_vals)
+        mean_ay = sum(acc_y_vals) / len(acc_y_vals)
+        mean_az = sum(acc_z_vals) / len(acc_z_vals)
+        mean_gx = sum(gyro_x_vals) / len(gyro_x_vals)
+        mean_gy = sum(gyro_y_vals) / len(gyro_y_vals)
+        mean_gz = sum(gyro_z_vals) / len(gyro_z_vals)
+        az_ref = float(self.imu_az_reference_g.get())
+        self.imu_ax_offset_g.set(-mean_ax)
+        self.imu_ay_offset_g.set(-mean_ay)
+        self.imu_az_offset_g.set(az_ref - mean_az)
+        self.imu_gx_offset_dps.set(-mean_gx)
+        self.imu_gy_offset_dps.set(-mean_gy)
+        self.imu_gz_offset_dps.set(-mean_gz)
+        self.status_text.set(
+            f"已填入零偏: AX={-mean_ax:+.4f} AY={-mean_ay:+.4f} AZ={az_ref - mean_az:+.4f} (参考{az_ref:+.2f}g)"
+        )
 
     def _open_imu_offsets_dialog(self):
         win = tk.Toplevel(self.root)
@@ -1955,8 +2020,20 @@ class CircleTrackerGUI:
         for i, (name, var) in enumerate(labels):
             ttk.Label(frame, text=name).grid(row=i, column=0, sticky="e", padx=(0, 8), pady=3)
             ttk.Entry(frame, textvariable=var, width=14).grid(row=i, column=1, sticky="w", pady=3)
+        row = len(labels)
+        ttk.Label(frame, text="AZ参考(g)").grid(row=row, column=0, sticky="e", padx=(0, 8), pady=(8, 3))
+        ttk.Entry(frame, textvariable=self.imu_az_reference_g, width=14).grid(row=row, column=1, sticky="w", pady=(8, 3))
+        row += 1
+        ttk.Button(frame, text="静置采样填入零偏", command=self._sample_fill_imu_offsets_flat).grid(
+            row=row, column=0, columnspan=2, sticky="ew", pady=(6, 0)
+        )
+        row += 1
+        ttk.Label(
+            frame,
+            text="静止平放时建议 AZ参考=+1.0g；倒置可设为-1.0g。AZ零偏只抵消误差，不是直接减1g。",
+        ).grid(row=row, column=0, columnspan=2, sticky="w", pady=(6, 0))
         btns = ttk.Frame(frame)
-        btns.grid(row=len(labels), column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        btns.grid(row=row + 1, column=0, columnspan=2, sticky="ew", pady=(10, 0))
         btns.columnconfigure(0, weight=1)
         btns.columnconfigure(1, weight=1)
         ttk.Button(btns, text="写入零偏", command=self._apply_imu_offsets).grid(row=0, column=0, sticky="ew")
