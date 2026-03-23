@@ -181,6 +181,7 @@ class CircleTrackerGUI:
         self.baudrate = tk.IntVar(value=9600)
         self.imu_port = tk.StringVar(value="/dev/ttyUSB0")
         self.imu_baudrate = tk.IntVar(value=9600)
+        self.imu_use_6axis = tk.BooleanVar(value=True)
         self.imu_output_hz = tk.IntVar(value=50)
         self.imu_ax_offset_g = tk.DoubleVar(value=0.0)
         self.imu_ay_offset_g = tk.DoubleVar(value=0.0)
@@ -227,6 +228,7 @@ class CircleTrackerGUI:
         self.stab_yaw_deadband_deg = tk.DoubleVar(value=0.6)
         self.stab_pan_limit_deg = tk.DoubleVar(value=8.0)
         self.stab_pan_alpha = tk.DoubleVar(value=0.35)
+        self.stab_pan_rate_limit_deg_per_s = tk.DoubleVar(value=120.0)
         
         # 激光指示对准配置
         self.laser_align_mode = tk.BooleanVar(value=False) # False:盲对准, True:指示对准
@@ -384,6 +386,7 @@ class CircleTrackerGUI:
             "stab_yaw_deadband_deg": 0.6,
             "stab_pan_limit_deg": 8.0,
             "stab_pan_alpha": 0.35,
+            "stab_pan_rate_limit_deg_per_s": 120.0,
         }
         def safe_int(var, key):
             try:
@@ -412,6 +415,7 @@ class CircleTrackerGUI:
                 "baudrate": safe_int(self.baudrate, "baudrate"),
                 "imu_port": str(self.imu_port.get()),
                 "imu_baudrate": safe_int(self.imu_baudrate, "imu_baudrate"),
+                "imu_use_6axis": safe_bool(self.imu_use_6axis),
                 "imu_output_hz": safe_int(self.imu_output_hz, "imu_output_hz"),
                 "imu_ax_offset_g": safe_float(self.imu_ax_offset_g, "imu_ax_offset_g"),
                 "imu_ay_offset_g": safe_float(self.imu_ay_offset_g, "imu_ay_offset_g"),
@@ -464,6 +468,7 @@ class CircleTrackerGUI:
                 "stab_yaw_deadband_deg": safe_float(self.stab_yaw_deadband_deg, "stab_yaw_deadband_deg"),
                 "stab_pan_limit_deg": safe_float(self.stab_pan_limit_deg, "stab_pan_limit_deg"),
                 "stab_pan_alpha": safe_float(self.stab_pan_alpha, "stab_pan_alpha"),
+                "stab_pan_rate_limit_deg_per_s": safe_float(self.stab_pan_rate_limit_deg_per_s, "stab_pan_rate_limit_deg_per_s"),
         }
 
     def _get_settings(self):
@@ -474,6 +479,8 @@ class CircleTrackerGUI:
             "baudrate": 9600,
             "imu_port": "/dev/ttyUSB0",
             "imu_baudrate": 9600,
+            "imu_use_6axis": True,
+            "imu_output_hz": 50,
             "imu_output_hz": 50,
             "imu_ax_offset_g": 0.0,
             "imu_ay_offset_g": 0.0,
@@ -523,6 +530,7 @@ class CircleTrackerGUI:
             "stab_yaw_deadband_deg": 0.6,
             "stab_pan_limit_deg": 8.0,
             "stab_pan_alpha": 0.35,
+            "stab_pan_rate_limit_deg_per_s": 120.0,
         }
         def safe_int(var, key):
             try:
@@ -547,6 +555,7 @@ class CircleTrackerGUI:
             "baudrate": safe_int(self.baudrate, "baudrate"),
             "imu_port": str(self.imu_port.get()) if self.imu_port.get() else defaults["imu_port"],
             "imu_baudrate": safe_int(self.imu_baudrate, "imu_baudrate"),
+            "imu_use_6axis": safe_bool(self.imu_use_6axis, "imu_use_6axis"),
             "imu_output_hz": safe_int(self.imu_output_hz, "imu_output_hz"),
             "imu_ax_offset_g": safe_float(self.imu_ax_offset_g, "imu_ax_offset_g"),
             "imu_ay_offset_g": safe_float(self.imu_ay_offset_g, "imu_ay_offset_g"),
@@ -599,6 +608,7 @@ class CircleTrackerGUI:
             "stab_yaw_deadband_deg": safe_float(self.stab_yaw_deadband_deg, "stab_yaw_deadband_deg"),
             "stab_pan_limit_deg": safe_float(self.stab_pan_limit_deg, "stab_pan_limit_deg"),
             "stab_pan_alpha": safe_float(self.stab_pan_alpha, "stab_pan_alpha"),
+            "stab_pan_rate_limit_deg_per_s": safe_float(self.stab_pan_rate_limit_deg_per_s, "stab_pan_rate_limit_deg_per_s"),
             "hw_pan_min": safe_float(self.hw_pan_min, "hw_pan_min"),
             "hw_pan_max": safe_float(self.hw_pan_max, "hw_pan_max"),
             "hw_tilt_min": safe_float(self.hw_tilt_min, "hw_tilt_min"),
@@ -624,6 +634,7 @@ class CircleTrackerGUI:
             "baudrate": self.baudrate,
             "imu_port": self.imu_port,
             "imu_baudrate": self.imu_baudrate,
+            "imu_use_6axis": self.imu_use_6axis,
             "imu_output_hz": self.imu_output_hz,
             "imu_ax_offset_g": self.imu_ax_offset_g,
             "imu_ay_offset_g": self.imu_ay_offset_g,
@@ -673,6 +684,7 @@ class CircleTrackerGUI:
             "stab_yaw_deadband_deg": self.stab_yaw_deadband_deg,
             "stab_pan_limit_deg": self.stab_pan_limit_deg,
             "stab_pan_alpha": self.stab_pan_alpha,
+            "stab_pan_rate_limit_deg_per_s": self.stab_pan_rate_limit_deg_per_s,
         }
         for key, var in var_map.items():
             if key not in data:
@@ -701,6 +713,7 @@ class CircleTrackerGUI:
                 "baudrate": int(self.baudrate.get()),
                 "imu_port": self.imu_port.get(),
                 "imu_baudrate": int(self.imu_baudrate.get()),
+                "imu_use_6axis": bool(self.imu_use_6axis.get()),
                 "imu_output_hz": int(self.imu_output_hz.get()),
                 "imu_ax_offset_g": float(self.imu_ax_offset_g.get()),
                 "imu_ay_offset_g": float(self.imu_ay_offset_g.get()),
@@ -753,6 +766,7 @@ class CircleTrackerGUI:
                 "stab_yaw_deadband_deg": float(self.stab_yaw_deadband_deg.get()),
                 "stab_pan_limit_deg": float(self.stab_pan_limit_deg.get()),
                 "stab_pan_alpha": float(self.stab_pan_alpha.get()),
+                "stab_pan_rate_limit_deg_per_s": float(self.stab_pan_rate_limit_deg_per_s.get()),
             }
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
@@ -782,6 +796,7 @@ class CircleTrackerGUI:
             self.baudrate,
             self.imu_port,
             self.imu_baudrate,
+            self.imu_use_6axis,
             self.imu_output_hz,
             self.imu_ax_offset_g,
             self.imu_ay_offset_g,
@@ -831,6 +846,10 @@ class CircleTrackerGUI:
             self.auto_stabilize,
             self.stab_gain_pitch,
             self.stab_gain_yaw,
+            self.stab_yaw_deadband_deg,
+            self.stab_pan_limit_deg,
+            self.stab_pan_alpha,
+            self.stab_pan_rate_limit_deg_per_s,
             self.hw_pan_min,
             self.hw_pan_max,
             self.hw_tilt_min,
@@ -937,32 +956,36 @@ class CircleTrackerGUI:
         ttk.Entry(imu_frame, textvariable=self.imu_output_hz, width=10).grid(row=1, column=1, sticky="w", padx=5)
         ttk.Button(imu_frame, text="应用输出", command=self._apply_imu_output_rate).grid(row=1, column=2, sticky="ew", padx=(0, 5))
         ttk.Button(imu_frame, text="应用波特率", command=self._apply_imu_baudrate).grid(row=1, column=3, sticky="ew")
-        ttk.Label(imu_frame, text="Pitch增益:").grid(row=2, column=0, sticky="e")
-        ttk.Entry(imu_frame, textvariable=self.stab_gain_pitch, width=10).grid(row=2, column=1, sticky="w", padx=5)
-        ttk.Label(imu_frame, text="Yaw增益:").grid(row=2, column=2, sticky="e")
-        ttk.Entry(imu_frame, textvariable=self.stab_gain_yaw, width=10).grid(row=2, column=3, sticky="w", padx=5)
-        ttk.Label(imu_frame, text="Yaw死区(°):").grid(row=3, column=0, sticky="e")
-        ttk.Entry(imu_frame, textvariable=self.stab_yaw_deadband_deg, width=10).grid(row=3, column=1, sticky="w", padx=5)
-        ttk.Label(imu_frame, text="Yaw限幅(°):").grid(row=3, column=2, sticky="e")
-        ttk.Entry(imu_frame, textvariable=self.stab_pan_limit_deg, width=10).grid(row=3, column=3, sticky="w", padx=5)
-        ttk.Label(imu_frame, text="Yaw平滑α:").grid(row=4, column=0, sticky="e")
-        ttk.Entry(imu_frame, textvariable=self.stab_pan_alpha, width=10).grid(row=4, column=1, sticky="w", padx=5)
-        ttk.Button(imu_frame, text="IMU置零", command=self._zero_imu).grid(row=5, column=0, sticky="ew", pady=(8, 0))
-        ttk.Button(imu_frame, text="零偏设置", command=self._open_imu_offsets_dialog).grid(row=5, column=1, sticky="ew", pady=(8, 0), padx=(5, 0))
-        ttk.Label(imu_frame, text="Pitch:").grid(row=5, column=2, sticky="e", pady=(8, 0))
-        ttk.Label(imu_frame, textvariable=self.imu_status_pitch).grid(row=5, column=3, sticky="w", pady=(8, 0))
-        ttk.Label(imu_frame, text="Yaw:").grid(row=6, column=2, sticky="e")
-        ttk.Label(imu_frame, textvariable=self.imu_status_yaw).grid(row=6, column=3, sticky="w")
-        ttk.Label(imu_frame, text="Age:").grid(row=6, column=0, sticky="e")
-        ttk.Label(imu_frame, textvariable=self.imu_status_age).grid(row=6, column=1, sticky="w")
-        ttk.Label(imu_frame, text="基准Pitch:").grid(row=7, column=0, sticky="e")
-        ttk.Label(imu_frame, textvariable=self.imu_status_pitch_base).grid(row=7, column=1, sticky="w")
-        ttk.Label(imu_frame, text="基准Yaw:").grid(row=7, column=2, sticky="e")
-        ttk.Label(imu_frame, textvariable=self.imu_status_yaw_base).grid(row=7, column=3, sticky="w")
-        ttk.Label(imu_frame, text="ΔPitch:").grid(row=8, column=0, sticky="e")
-        ttk.Label(imu_frame, textvariable=self.imu_status_pitch_delta).grid(row=8, column=1, sticky="w")
-        ttk.Label(imu_frame, text="ΔYaw:").grid(row=8, column=2, sticky="e")
-        ttk.Label(imu_frame, textvariable=self.imu_status_yaw_delta).grid(row=8, column=3, sticky="w")
+        ttk.Checkbutton(imu_frame, text="6轴算法", variable=self.imu_use_6axis).grid(row=2, column=0, sticky="w")
+        ttk.Button(imu_frame, text="应用算法", command=self._apply_imu_algorithm_mode).grid(row=2, column=1, sticky="ew", padx=(5, 0))
+        ttk.Label(imu_frame, text="Pitch增益:").grid(row=3, column=0, sticky="e")
+        ttk.Entry(imu_frame, textvariable=self.stab_gain_pitch, width=10).grid(row=3, column=1, sticky="w", padx=5)
+        ttk.Label(imu_frame, text="Yaw增益:").grid(row=3, column=2, sticky="e")
+        ttk.Entry(imu_frame, textvariable=self.stab_gain_yaw, width=10).grid(row=3, column=3, sticky="w", padx=5)
+        ttk.Label(imu_frame, text="Yaw死区(°):").grid(row=4, column=0, sticky="e")
+        ttk.Entry(imu_frame, textvariable=self.stab_yaw_deadband_deg, width=10).grid(row=4, column=1, sticky="w", padx=5)
+        ttk.Label(imu_frame, text="Yaw限幅(°):").grid(row=4, column=2, sticky="e")
+        ttk.Entry(imu_frame, textvariable=self.stab_pan_limit_deg, width=10).grid(row=4, column=3, sticky="w", padx=5)
+        ttk.Label(imu_frame, text="Yaw平滑α:").grid(row=5, column=0, sticky="e")
+        ttk.Entry(imu_frame, textvariable=self.stab_pan_alpha, width=10).grid(row=5, column=1, sticky="w", padx=5)
+        ttk.Label(imu_frame, text="Yaw速度限幅(°/s):").grid(row=5, column=2, sticky="e")
+        ttk.Entry(imu_frame, textvariable=self.stab_pan_rate_limit_deg_per_s, width=10).grid(row=5, column=3, sticky="w", padx=5)
+        ttk.Button(imu_frame, text="IMU置零", command=self._zero_imu).grid(row=6, column=0, sticky="ew", pady=(8, 0))
+        ttk.Button(imu_frame, text="零偏设置", command=self._open_imu_offsets_dialog).grid(row=6, column=1, sticky="ew", pady=(8, 0), padx=(5, 0))
+        ttk.Label(imu_frame, text="Pitch:").grid(row=6, column=2, sticky="e", pady=(8, 0))
+        ttk.Label(imu_frame, textvariable=self.imu_status_pitch).grid(row=6, column=3, sticky="w", pady=(8, 0))
+        ttk.Label(imu_frame, text="Yaw:").grid(row=7, column=2, sticky="e")
+        ttk.Label(imu_frame, textvariable=self.imu_status_yaw).grid(row=7, column=3, sticky="w")
+        ttk.Label(imu_frame, text="Age:").grid(row=7, column=0, sticky="e")
+        ttk.Label(imu_frame, textvariable=self.imu_status_age).grid(row=7, column=1, sticky="w")
+        ttk.Label(imu_frame, text="基准Pitch:").grid(row=8, column=0, sticky="e")
+        ttk.Label(imu_frame, textvariable=self.imu_status_pitch_base).grid(row=8, column=1, sticky="w")
+        ttk.Label(imu_frame, text="基准Yaw:").grid(row=8, column=2, sticky="e")
+        ttk.Label(imu_frame, textvariable=self.imu_status_yaw_base).grid(row=8, column=3, sticky="w")
+        ttk.Label(imu_frame, text="ΔPitch:").grid(row=9, column=0, sticky="e")
+        ttk.Label(imu_frame, textvariable=self.imu_status_pitch_delta).grid(row=9, column=1, sticky="w")
+        ttk.Label(imu_frame, text="ΔYaw:").grid(row=9, column=2, sticky="e")
+        ttk.Label(imu_frame, textvariable=self.imu_status_yaw_delta).grid(row=9, column=3, sticky="w")
 
         pid_cols = ttk.Frame(tab_pid)
         pid_cols.pack(fill=tk.BOTH, expand=True)
@@ -1458,7 +1481,15 @@ class CircleTrackerGUI:
                         stab_pan_target = max(-pan_limit, min(pan_limit, stab_pan_target))
                         alpha = float(s.get("stab_pan_alpha", 0.35))
                         alpha = max(0.0, min(1.0, alpha))
-                        self.stab_pan_filtered_deg = self.stab_pan_filtered_deg + alpha * (stab_pan_target - self.stab_pan_filtered_deg)
+                        filtered_target = self.stab_pan_filtered_deg + alpha * (stab_pan_target - self.stab_pan_filtered_deg)
+                        rate_limit = max(0.0, float(s.get("stab_pan_rate_limit_deg_per_s", 120.0)))
+                        max_delta = rate_limit * dt
+                        delta_filtered = filtered_target - self.stab_pan_filtered_deg
+                        if delta_filtered > max_delta:
+                            delta_filtered = max_delta
+                        elif delta_filtered < -max_delta:
+                            delta_filtered = -max_delta
+                        self.stab_pan_filtered_deg = self.stab_pan_filtered_deg + delta_filtered
                         stab_pan_raw = self.stab_pan_filtered_deg
                         stab_tilt = self._quantize_to_servo_step_deg(stab_tilt_raw, axis="tilt")
                         stab_pan = self._quantize_to_servo_step_deg(stab_pan_raw, axis="pan")
@@ -2015,6 +2046,7 @@ class CircleTrackerGUI:
         )
         try:
             self.imu.configure_output(output_mask=0x000E, rate_code=0x08)
+            self.imu.set_algorithm_mode(bool(settings.get("imu_use_6axis", self.imu_use_6axis.get())))
             hz = int(settings.get("imu_output_hz", self.imu_output_hz.get()))
             self.imu.set_output_rate_hz(hz)
         except Exception:
@@ -2074,6 +2106,16 @@ class CircleTrackerGUI:
             hz = int(self.imu_output_hz.get())
             self.imu.set_output_rate_hz(hz)
             self.status_text.set(f"IMU输出速率已设置为 {hz}Hz")
+        except Exception as exc:
+            self.worker_error = str(exc)
+            self.status_text.set(f"IMU配置失败: {exc}")
+
+    def _apply_imu_algorithm_mode(self):
+        try:
+            self._ensure_imu()
+            use_6axis = bool(self.imu_use_6axis.get())
+            self.imu.set_algorithm_mode(use_6axis)
+            self.status_text.set("IMU算法已设置为6轴" if use_6axis else "IMU算法已设置为9轴")
         except Exception as exc:
             self.worker_error = str(exc)
             self.status_text.set(f"IMU配置失败: {exc}")

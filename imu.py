@@ -229,6 +229,13 @@ class IMUReader:
         self.write_reg(0x00, 0x0000)
         time.sleep(0.1)
 
+    def set_algorithm_mode(self, use_6axis: bool = True):
+        mode = 0x0001 if bool(use_6axis) else 0x0000
+        self.unlock()
+        self.write_reg(0x24, mode)
+        self.write_reg(0x00, 0x0000)
+        time.sleep(0.1)
+
     def apply_baudrate(self, baudrate: int):
         baudrate = int(baudrate)
         if baudrate not in self.BAUD_TO_BAUD_CODE:
