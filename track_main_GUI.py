@@ -7,7 +7,7 @@ import queue
 import sys
 import importlib.util
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, scrolledtext
 
 import cv2
 import numpy as np
@@ -221,6 +221,7 @@ class CircleTrackerGUI:
         self.y_bias = tk.IntVar(value=0)
         self.camera_fps = tk.IntVar(value=60)
         self.status_text = tk.StringVar(value="就绪")
+        self.status_log_widget = None
 
         self.auto_stabilize = tk.BooleanVar(value=False)
         self.stab_gain_pitch = tk.DoubleVar(value=1.0)
@@ -276,6 +277,7 @@ class CircleTrackerGUI:
 
         self._load_settings()
         self._build_ui()
+        self.status_text.trace_add("write", self._on_status_text_changed)
         self.servo_mode.trace_add("write", self._on_servo_mode_change)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.root.bind("<Escape>", lambda _e: self.on_close())
@@ -345,6 +347,8 @@ class CircleTrackerGUI:
             "baudrate": 9600,
             "imu_port": "/dev/ttyUSB0",
             "imu_baudrate": 9600,
+            "imu_use_6axis": True,
+            "imu_output_hz": 50,
             "pan_id": 1,
             "tilt_id": 2,
             "move_time_ms": 40,
@@ -387,6 +391,16 @@ class CircleTrackerGUI:
             "stab_pan_limit_deg": 8.0,
             "stab_pan_alpha": 0.35,
             "stab_pan_rate_limit_deg_per_s": 120.0,
+            "imu_ax_offset_g": 0.0,
+            "imu_ay_offset_g": 0.0,
+            "imu_az_offset_g": 0.0,
+            "imu_gx_offset_dps": 0.0,
+            "imu_gy_offset_dps": 0.0,
+            "imu_gz_offset_dps": 0.0,
+            "imu_hx_offset": 0,
+            "imu_hy_offset": 0,
+            "imu_hz_offset": 0,
+            "imu_az_reference_g": 1.0,
         }
         def safe_int(var, key):
             try:
@@ -876,6 +890,9 @@ class CircleTrackerGUI:
         self.preview_label = ttk.Label(right)
         self.preview_label.pack(fill=tk.BOTH, expand=True)
         ttk.Label(right, textvariable=self.status_text).pack(anchor=tk.W, pady=(6, 0))
+        self.status_log_widget = scrolledtext.ScrolledText(right, height=6, wrap=tk.WORD)
+        self.status_log_widget.pack(fill=tk.X, pady=(4, 0))
+        self.status_log_widget.configure(state=tk.DISABLED)
 
         notebook = ttk.Notebook(left)
         notebook.pack(fill=tk.BOTH, expand=True)
@@ -1181,6 +1198,22 @@ class CircleTrackerGUI:
         rc += 1
         rc = self._grid_slider(cam, rc, 0, "曝光(us)", self.exposure_value, 100, 100000)
         rc = self._grid_slider(cam, rc, 0, "增益", self.analogue_gain, 1.0, 22.0)
+
+    def _on_status_text_changed(self, *_args):
+        widget = self.status_log_widget
+        if widget is None:
+            return
+        try:
+            msg = self.status_text.get()
+        except Exception:
+            return
+        if msg is None:
+            return
+        line = f"{time.strftime('%H:%M:%S')}  {msg}\n"
+        widget.configure(state=tk.NORMAL)
+        widget.insert(tk.END, line)
+        widget.see(tk.END)
+        widget.configure(state=tk.DISABLED)
 
     def _grid_entry(self, parent, row, col, text, var, width=10):
         ttk.Label(parent, text=text).grid(row=row, column=col, sticky="w", padx=(0, 6), pady=(2, 2))
@@ -2406,14 +2439,35 @@ class CircleTrackerGUI:
         self.current_tilt_angle = 0.0
 
         max_attempts = 10
+        default_min, default_max = -90.0, 90.0
+
+        def normalize_limits(raw_min, raw_max):
+            try:
+                a = float(raw_min)
+                b = float(raw_max)
+            except Exception:
+                return default_min, default_max, False
+            if not (math.isfinite(a) and math.isfinite(b)):
+                return default_min, default_max, False
+            if a > b:
+                a, b = b, a
+            a = max(-120.0, min(120.0, a))
+            b = max(-120.0, min(120.0, b))
+            if (b - a) < 20.0:
+                return default_min, default_max, False
+            return a, b, True
 
         print("[INFO] 正在读取水平舵机硬件边界...")
         for attempt in range(1, max_attempts + 1):
             try:
                 pan_min, pan_max = self.servo.read_hardware_angle_limits(self.active_pan_id)
+                pan_min, pan_max, ok = normalize_limits(pan_min, pan_max)
                 self.root.after(0, lambda: self.hw_pan_min.set(pan_min))
                 self.root.after(0, lambda: self.hw_pan_max.set(pan_max))
-                print(f"[INFO] 水平舵机边界读取成功: {pan_min} ~ {pan_max}")
+                if ok:
+                    print(f"[INFO] 水平舵机边界读取成功: {pan_min} ~ {pan_max}")
+                else:
+                    self.status_text.set("水平舵机硬件边界异常，已回退到±90°")
                 break
             except Exception as e:
                 if attempt < max_attempts:
@@ -2426,9 +2480,13 @@ class CircleTrackerGUI:
         for attempt in range(1, max_attempts + 1):
             try:
                 tilt_min, tilt_max = self.servo.read_hardware_angle_limits(self.active_tilt_id)
+                tilt_min, tilt_max, ok = normalize_limits(tilt_min, tilt_max)
                 self.root.after(0, lambda: self.hw_tilt_min.set(tilt_min))
                 self.root.after(0, lambda: self.hw_tilt_max.set(tilt_max))
-                print(f"[INFO] 俯仰舵机边界读取成功: {tilt_min} ~ {tilt_max}")
+                if ok:
+                    print(f"[INFO] 俯仰舵机边界读取成功: {tilt_min} ~ {tilt_max}")
+                else:
+                    self.status_text.set("俯仰舵机硬件边界异常，已回退到±90°")
                 break
             except Exception as e:
                 if attempt < max_attempts:
