@@ -2045,7 +2045,7 @@ class CircleTrackerGUI:
             debug=False,
         )
         try:
-            self.imu.configure_output(output_mask=0x000E, rate_code=0x08)
+            self.imu.configure_output(output_mask=0x001E, rate_code=0x08)
             self.imu.set_algorithm_mode(bool(settings.get("imu_use_6axis", self.imu_use_6axis.get())))
             hz = int(settings.get("imu_output_hz", self.imu_output_hz.get()))
             self.imu.set_output_rate_hz(hz)
@@ -2172,6 +2172,9 @@ class CircleTrackerGUI:
         gyro_x_vals = []
         gyro_y_vals = []
         gyro_z_vals = []
+        mag_x_vals = []
+        mag_y_vals = []
+        mag_z_vals = []
         while time.time() < deadline and len(acc_x_vals) < 50:
             try:
                 s = self.imu.get_state()
@@ -2184,6 +2187,9 @@ class CircleTrackerGUI:
                 gyro_x_vals.append(float(s.gyro_x_dps))
                 gyro_y_vals.append(float(s.gyro_y_dps))
                 gyro_z_vals.append(float(s.gyro_z_dps))
+                mag_x_vals.append(float(getattr(s, "mag_x_raw", 0.0)))
+                mag_y_vals.append(float(getattr(s, "mag_y_raw", 0.0)))
+                mag_z_vals.append(float(getattr(s, "mag_z_raw", 0.0)))
             except Exception:
                 pass
             time.sleep(0.02)
@@ -2196,6 +2202,9 @@ class CircleTrackerGUI:
         mean_gx = sum(gyro_x_vals) / len(gyro_x_vals)
         mean_gy = sum(gyro_y_vals) / len(gyro_y_vals)
         mean_gz = sum(gyro_z_vals) / len(gyro_z_vals)
+        mean_mx = sum(mag_x_vals) / len(mag_x_vals) if mag_x_vals else 0.0
+        mean_my = sum(mag_y_vals) / len(mag_y_vals) if mag_y_vals else 0.0
+        mean_mz = sum(mag_z_vals) / len(mag_z_vals) if mag_z_vals else 0.0
         az_ref = float(self.imu_az_reference_g.get())
         self.imu_ax_offset_g.set(-mean_ax)
         self.imu_ay_offset_g.set(-mean_ay)
@@ -2203,8 +2212,12 @@ class CircleTrackerGUI:
         self.imu_gx_offset_dps.set(-mean_gx)
         self.imu_gy_offset_dps.set(-mean_gy)
         self.imu_gz_offset_dps.set(-mean_gz)
+        self.imu_hx_offset.set(int(round(-mean_mx)))
+        self.imu_hy_offset.set(int(round(-mean_my)))
+        self.imu_hz_offset.set(int(round(-mean_mz)))
         self.status_text.set(
-            f"已填入零偏: AX={-mean_ax:+.4f} AY={-mean_ay:+.4f} AZ={az_ref - mean_az:+.4f} (参考{az_ref:+.2f}g)"
+            f"已填入零偏: AX={-mean_ax:+.4f} AY={-mean_ay:+.4f} AZ={az_ref - mean_az:+.4f} "
+            f"HX={int(round(-mean_mx))} HY={int(round(-mean_my))} HZ={int(round(-mean_mz))}"
         )
 
     def _open_imu_offsets_dialog(self):
@@ -2238,7 +2251,7 @@ class CircleTrackerGUI:
         row += 1
         ttk.Label(
             frame,
-            text="静止平放时建议 AZ参考=+1.0g；倒置可设为-1.0g。AZ零偏只抵消误差，不是直接减1g。",
+            text="静置采样会同时填入HX/HY/HZ当前均值反向值；磁场零偏更建议多方向旋转后再精调。",
         ).grid(row=row, column=0, columnspan=2, sticky="w", pady=(6, 0))
         btns = ttk.Frame(frame)
         btns.grid(row=row + 1, column=0, columnspan=2, sticky="ew", pady=(10, 0))

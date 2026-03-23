@@ -34,6 +34,9 @@ class ImuState:
     roll_deg: float = 0.0
     pitch_deg: float = 0.0
     yaw_deg: float = 0.0
+    mag_x_raw: float = 0.0
+    mag_y_raw: float = 0.0
+    mag_z_raw: float = 0.0
 
     temperature_c: Optional[float] = None
     last_update: float = 0.0
@@ -54,6 +57,7 @@ class IMUReader:
     TYPE_ACC = 0x51
     TYPE_GYRO = 0x52
     TYPE_ANGLE = 0x53
+    TYPE_MAG = 0x54
 
     def __init__(self, port: str, baudrate: int = 9600, timeout: float = 0.1, debug: bool = False):
         self.ser = serial.Serial(port, baudrate=baudrate, timeout=timeout)
@@ -126,6 +130,16 @@ class IMUReader:
                 self.state.last_update = time.time()
                 updated = True
 
+            elif ftype == self.TYPE_MAG:
+                mx = _to_int16(d[0], d[1])
+                my = _to_int16(d[2], d[3])
+                mz = _to_int16(d[4], d[5])
+                self.state.mag_x_raw = float(mx)
+                self.state.mag_y_raw = float(my)
+                self.state.mag_z_raw = float(mz)
+                self.state.last_update = time.time()
+                updated = True
+
         return updated
 
     def _feed(self, data: bytes):
@@ -175,9 +189,10 @@ class IMUReader:
             bit1 ACC(0x51)
             bit2 GYRO(0x52)
             bit3 ANGLE(0x53)
+            bit4 MAG(0x54)
 
         推荐默认:
-            0x000E = ACC + GYRO + ANGLE
+            0x001E = ACC + GYRO + ANGLE + MAG
 
         rate_code:
             RRATE 寄存器值
@@ -346,6 +361,9 @@ class IMUReader:
             "roll_deg": s.roll_deg,
             "pitch_deg": s.pitch_deg,
             "yaw_deg": s.yaw_deg,
+            "mag_x_raw": s.mag_x_raw,
+            "mag_y_raw": s.mag_y_raw,
+            "mag_z_raw": s.mag_z_raw,
             "temperature_c": s.temperature_c if s.temperature_c is not None else 0.0,
             "last_update": s.last_update,
         }
