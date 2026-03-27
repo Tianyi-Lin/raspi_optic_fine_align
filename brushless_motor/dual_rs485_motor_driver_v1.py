@@ -56,7 +56,7 @@ class MotorConfig:
     dev: str
     txden_pin: int
     direction_sign: int = 1      # 机械安装方向映射：+1 / -1
-    baudrate: int = 115200
+    baudrate: int = 1000000
     timeout: float = 0.05
     default_speed_dps: float = 90.0
     min_deg: float = -180.0
@@ -64,7 +64,7 @@ class MotorConfig:
 
 
 class RS485Port:
-    def __init__(self, dev: str, txden_pin: int, baudrate: int = 115200, timeout: float = 0.05):
+    def __init__(self, dev: str, txden_pin: int, baudrate: int = 1000000, timeout: float = 0.05):
         self.dev = dev
         self.txden_pin = txden_pin
         self.timeout = timeout

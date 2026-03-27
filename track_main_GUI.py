@@ -280,7 +280,7 @@ class CircleTrackerGUI:
 
         self.port = tk.StringVar(value="/dev/ttyAMA1")
         # self.baudrate = tk.IntVar(value=115200)
-        self.baudrate = tk.IntVar(value=9600)
+        self.baudrate = tk.IntVar(value=1000000)
         self.brushless_pan_dev = tk.StringVar(value="/dev/ttySC0")
         self.brushless_tilt_dev = tk.StringVar(value="/dev/ttySC1")
         self.brushless_pan_txden = tk.IntVar(value=22)
@@ -330,6 +330,7 @@ class CircleTrackerGUI:
         self.x_bias = tk.IntVar(value=0)
         self.y_bias = tk.IntVar(value=0)
         self.camera_fps = tk.IntVar(value=60)
+        self.image_rotate_deg = tk.DoubleVar(value=0.0)
         self.status_text = tk.StringVar(value="就绪")
         self.status_log_widget = None
         self.show_debug_panels = tk.BooleanVar(value=False)
@@ -459,7 +460,7 @@ class CircleTrackerGUI:
     def _update_settings_from_vars(self):
         fallback = {
             "servo_mode": "无刷RS485",
-            "baudrate": 115200,
+            "baudrate": 1000000,
             "brushless_pan_dev": "/dev/ttySC0",
             "brushless_tilt_dev": "/dev/ttySC1",
             "brushless_pan_txden": 22,
@@ -495,6 +496,7 @@ class CircleTrackerGUI:
             "x_bias": 0,
             "y_bias": 0,
             "camera_fps": 60,
+            "image_rotate_deg": 0.0,
             "show_debug_panels": False,
             "laser_align_mode": False,
             "laser_threshold": 240,
@@ -604,6 +606,7 @@ class CircleTrackerGUI:
                 "x_bias": safe_int(self.x_bias, "x_bias"),
                 "y_bias": safe_int(self.y_bias, "y_bias"),
                 "camera_fps": safe_int(self.camera_fps, "camera_fps"),
+                "image_rotate_deg": safe_float(self.image_rotate_deg, "image_rotate_deg"),
                 "show_debug_panels": safe_bool(self.show_debug_panels),
                 "laser_align_mode": safe_bool(self.laser_align_mode),
                 "laser_threshold": safe_int(self.laser_threshold, "laser_threshold"),
@@ -631,7 +634,7 @@ class CircleTrackerGUI:
         defaults = {
             "servo_mode": "无刷RS485",
             "port": "/dev/ttyAMA1",
-            "baudrate": 115200,
+            "baudrate": 1000000,
             "brushless_pan_dev": "/dev/ttySC0",
             "brushless_tilt_dev": "/dev/ttySC1",
             "brushless_pan_txden": 22,
@@ -681,6 +684,7 @@ class CircleTrackerGUI:
             "max_radius": 120,
             "x_bias": 0,
             "y_bias": 0,
+            "image_rotate_deg": 0.0,
             "show_debug_panels": False,
             "pan_min": -180.0,
             "pan_max": 180.0,
@@ -770,6 +774,7 @@ class CircleTrackerGUI:
             "x_bias": safe_int(self.x_bias, "x_bias"),
             "y_bias": safe_int(self.y_bias, "y_bias"),
             "camera_fps": safe_int(self.camera_fps, "camera_fps"),
+            "image_rotate_deg": safe_float(self.image_rotate_deg, "image_rotate_deg"),
             "show_debug_panels": safe_bool(self.show_debug_panels, "show_debug_panels"),
             "laser_align_mode": safe_bool(self.laser_align_mode, "laser_align_mode"),
             "laser_threshold": safe_int(self.laser_threshold, "laser_threshold"),
@@ -861,6 +866,7 @@ class CircleTrackerGUI:
             "max_radius": self.max_radius,
             "x_bias": self.x_bias,
             "y_bias": self.y_bias,
+            "image_rotate_deg": self.image_rotate_deg,
             "show_debug_panels": self.show_debug_panels,
             "pan_min": self.pan_min,
             "pan_max": self.pan_max,
@@ -954,6 +960,7 @@ class CircleTrackerGUI:
                 "x_bias": int(self.x_bias.get()),
                 "y_bias": int(self.y_bias.get()),
                 "camera_fps": int(self.camera_fps.get()),
+                "image_rotate_deg": float(self.image_rotate_deg.get()),
                 "show_debug_panels": bool(self.show_debug_panels.get()),
                 "laser_align_mode": bool(self.laser_align_mode.get()),
                 "laser_threshold": int(self.laser_threshold.get()),
@@ -1049,6 +1056,7 @@ class CircleTrackerGUI:
             self.max_radius,
             self.x_bias,
             self.y_bias,
+            self.image_rotate_deg,
             self.show_debug_panels,
             self.camera_fps,
             self.laser_align_mode,
@@ -1421,6 +1429,7 @@ class CircleTrackerGUI:
         cam.columnconfigure(0, weight=1)
         rc = 0
         rc = self._grid_slider(cam, rc, 0, "相机FPS", self.camera_fps, 10, 120)
+        rc = self._grid_slider(cam, rc, 0, "图像旋转(°)", self.image_rotate_deg, -30.0, 30.0)
         
         # 添加红色警告提示Label (初始隐藏或为空)
         self.fps_warning_var = tk.StringVar(value="")
@@ -1612,6 +1621,19 @@ class CircleTrackerGUI:
                 self._sync_camera_controls(s["ae_enable"], s["exposure"], s["gain"], s["camera_fps"])
 
                 frame_rgb = self.picam2.capture_array()
+                rotate_deg = float(s.get("image_rotate_deg", 0.0))
+                if abs(rotate_deg) > 1e-3:
+                    h0, w0 = frame_rgb.shape[:2]
+                    c0 = (w0 * 0.5, h0 * 0.5)
+                    rot_m = cv2.getRotationMatrix2D(c0, rotate_deg, 1.0)
+                    frame_rgb = cv2.warpAffine(
+                        frame_rgb,
+                        rot_m,
+                        (w0, h0),
+                        flags=cv2.INTER_LINEAR,
+                        borderMode=cv2.BORDER_CONSTANT,
+                        borderValue=(0, 0, 0),
+                    )
                 h, w = frame_rgb.shape[:2]
                 center_x, center_y = w // 2, h // 2
                 with self.detect_lock:
@@ -2640,7 +2662,7 @@ class CircleTrackerGUI:
         if self.servo_mode.get() == "控制板":
             self.baudrate.set(9600)
         elif self.servo_mode.get() == "无刷RS485":
-            self.baudrate.set(115200)
+            self.baudrate.set(1000000)
         else:
             self.baudrate.set(115200)
         self._refresh_servo_mode_ui()

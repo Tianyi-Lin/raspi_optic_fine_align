@@ -13,7 +13,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--id", type=int, required=True, help="电机ID，例如 1 或 2")
     parser.add_argument("--dev", type=str, required=True, help="串口设备，例如 /dev/ttySC0")
     parser.add_argument("--txden", type=int, required=True, help="485方向控制GPIO，BCM编号")
-    parser.add_argument("--baudrate", type=int, default=115200, help="串口波特率")
+    parser.add_argument("--baudrate", type=int, default=1000000, help="串口波特率")
     parser.add_argument("--timeout", type=float, default=0.05, help="串口超时秒")
     parser.add_argument("--dir-sign", type=int, choices=[-1, 1], default=1, help="角度方向映射")
     parser.add_argument("--min-deg", type=float, default=-180.0, help="最小角度限制")
