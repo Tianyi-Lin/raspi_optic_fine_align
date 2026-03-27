@@ -115,6 +115,99 @@ class BoardServoAdapter:
         self.driver.close()
 
 
+class BrushlessDualServoAdapter:
+    def __init__(
+        self,
+        motor_config_cls,
+        motor_cls,
+        pan_id,
+        tilt_id,
+        pan_dev,
+        tilt_dev,
+        pan_txden,
+        tilt_txden,
+        pan_direction_sign,
+        tilt_direction_sign,
+        pan_speed_dps,
+        tilt_speed_dps,
+        pan_min_deg,
+        pan_max_deg,
+        tilt_min_deg,
+        tilt_max_deg,
+    ):
+        self.pan_id = int(pan_id)
+        self.tilt_id = int(tilt_id)
+        self.pan_speed_dps = float(pan_speed_dps)
+        self.tilt_speed_dps = float(tilt_speed_dps)
+        self.pan_motor = motor_cls(
+            motor_config_cls(
+                name="yaw",
+                motor_id=int(pan_id),
+                dev=str(pan_dev),
+                txden_pin=int(pan_txden),
+                direction_sign=int(pan_direction_sign),
+                default_speed_dps=float(pan_speed_dps),
+                min_deg=float(pan_min_deg),
+                max_deg=float(pan_max_deg),
+            )
+        )
+        self.tilt_motor = motor_cls(
+            motor_config_cls(
+                name="pitch",
+                motor_id=int(tilt_id),
+                dev=str(tilt_dev),
+                txden_pin=int(tilt_txden),
+                direction_sign=int(tilt_direction_sign),
+                default_speed_dps=float(tilt_speed_dps),
+                min_deg=float(tilt_min_deg),
+                max_deg=float(tilt_max_deg),
+            )
+        )
+        self._pending_pan_deg = 0.0
+        self._pending_tilt_deg = 0.0
+        self.pan_motor.motor_run()
+        time.sleep(0.03)
+        self.tilt_motor.motor_run()
+
+    def set_angles(self, angles):
+        for servo_id, angle in angles:
+            sid = int(servo_id)
+            if sid == self.pan_id:
+                self._pending_pan_deg = float(angle)
+            elif sid == self.tilt_id:
+                self._pending_tilt_deg = float(angle)
+
+    def move_angle(self, wait=True):
+        self.pan_motor.move_to_deg(self._pending_pan_deg, max_speed_dps=self.pan_speed_dps)
+        time.sleep(0.005)
+        self.tilt_motor.move_to_deg(self._pending_tilt_deg, max_speed_dps=self.tilt_speed_dps)
+        if wait:
+            time.sleep(0.01)
+
+    def read_servos_angle(self):
+        pan = self.pan_motor.read_multi_turn_angle_deg()
+        tilt = self.tilt_motor.read_multi_turn_angle_deg()
+        return [(self.pan_id, pan), (self.tilt_id, tilt)]
+
+    def cleanup(self):
+        try:
+            self.pan_motor.motor_stop()
+        except Exception:
+            pass
+        try:
+            self.tilt_motor.motor_stop()
+        except Exception:
+            pass
+        try:
+            self.pan_motor.close()
+        except Exception:
+            pass
+        try:
+            self.tilt_motor.close()
+        except Exception:
+            pass
+
+
 class CircleTrackerGUI:
     def __init__(self, root):
         self.root = root
@@ -158,8 +251,7 @@ class CircleTrackerGUI:
         self.active_pan_id = 1
         self.active_tilt_id = 2
         self.jog_step_deg = tk.DoubleVar(value=1.0)
-        # self.servo_mode = tk.StringVar(value="调试板")
-        self.servo_mode = tk.StringVar(value="控制板")
+        self.servo_mode = tk.StringVar(value="无刷RS485")
         self.servo_status_mode = tk.StringVar(value=self.servo_mode.get())
         self.servo_status_pan = tk.StringVar(value="-")
         self.servo_status_tilt = tk.StringVar(value="-")
@@ -176,10 +268,20 @@ class CircleTrackerGUI:
         self._board_transport_cls = None
         self._board_driver_cls = None
         self._bus_servo_cls = None
+        self._brushless_motor_config_cls = None
+        self._brushless_motor_cls = None
 
         self.port = tk.StringVar(value="/dev/ttyAMA1")
         # self.baudrate = tk.IntVar(value=115200)
         self.baudrate = tk.IntVar(value=9600)
+        self.brushless_pan_dev = tk.StringVar(value="/dev/ttySC0")
+        self.brushless_tilt_dev = tk.StringVar(value="/dev/ttySC1")
+        self.brushless_pan_txden = tk.IntVar(value=22)
+        self.brushless_tilt_txden = tk.IntVar(value=27)
+        self.brushless_pan_direction_sign = tk.IntVar(value=1)
+        self.brushless_tilt_direction_sign = tk.IntVar(value=1)
+        self.brushless_pan_speed_dps = tk.DoubleVar(value=120.0)
+        self.brushless_tilt_speed_dps = tk.DoubleVar(value=120.0)
         self.imu_port = tk.StringVar(value="/dev/ttyUSB0")
         self.imu_baudrate = tk.IntVar(value=9600)
         self.imu_use_6axis = tk.BooleanVar(value=True)
@@ -195,7 +297,7 @@ class CircleTrackerGUI:
         self.imu_hz_offset = tk.IntVar(value=0)
         self.imu_az_reference_g = tk.DoubleVar(value=1.0)
         self.pan_id = tk.IntVar(value=1)
-        self.tilt_id = tk.IntVar(value=2)
+        self.tilt_id = tk.IntVar(value=1)
         self.move_time_ms = tk.IntVar(value=40)
         self.control_period_ms = tk.IntVar(value=50)
         self.track_enabled = tk.BooleanVar(value=True)
@@ -208,7 +310,7 @@ class CircleTrackerGUI:
         self.ki_y = tk.DoubleVar(value=0.02)
         self.kd_y = tk.DoubleVar(value=0.000005)
         self.error_deadband = tk.DoubleVar(value=3.0)
-        self.max_delta_deg_per_sec = tk.DoubleVar(value=30.0)
+        self.max_delta_deg_per_sec = tk.DoubleVar(value=120.0)
         self.exposure_value = tk.IntVar(value=10000) # 微秒 us
         self.analogue_gain = tk.DoubleVar(value=1.0)
         self.ae_enable = tk.BooleanVar(value=True)
@@ -241,8 +343,8 @@ class CircleTrackerGUI:
         self.laser_threshold = tk.IntVar(value=240)        # 激光二值化阈值
         
         # 舵机角度范围配置（角度制）
-        self.pan_min = tk.DoubleVar(value=-90.0)
-        self.pan_max = tk.DoubleVar(value=90.0)
+        self.pan_min = tk.DoubleVar(value=-180.0)
+        self.pan_max = tk.DoubleVar(value=180.0)
         self.tilt_min = tk.DoubleVar(value=-90.0)
         self.tilt_max = tk.DoubleVar(value=90.0)
         
@@ -251,8 +353,8 @@ class CircleTrackerGUI:
         self.kalman_measurement_noise = tk.DoubleVar(value=0.4)
         
         # 硬件物理边界（从舵机读取）
-        self.hw_pan_min = tk.DoubleVar(value=-90.0)
-        self.hw_pan_max = tk.DoubleVar(value=90.0)
+        self.hw_pan_min = tk.DoubleVar(value=-180.0)
+        self.hw_pan_max = tk.DoubleVar(value=180.0)
         self.hw_tilt_min = tk.DoubleVar(value=-90.0)
         self.hw_tilt_max = tk.DoubleVar(value=90.0)
         self.latest_frame = None
@@ -309,13 +411,13 @@ class CircleTrackerGUI:
         # 2. 尝试提前初始化舵机并在GUI显示前立即回正
         try:
             # 确保使用正确的配置初始化舵机
-            fallback_mode = "控制板"
+            fallback_mode = "无刷RS485"
             try:
                 settings_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tracker_settings.txt")
                 if os.path.exists(settings_path):
                     with open(settings_path, "r", encoding="utf-8") as f:
                         data = json.load(f)
-                        fallback_mode = str(data.get("servo_mode", "控制板")).strip()
+                        fallback_mode = str(data.get("servo_mode", "无刷RS485")).strip()
             except Exception:
                 pass
             
@@ -348,14 +450,22 @@ class CircleTrackerGUI:
 
     def _update_settings_from_vars(self):
         fallback = {
-            "servo_mode": "控制板",
-            "baudrate": 9600,
+            "servo_mode": "无刷RS485",
+            "baudrate": 115200,
+            "brushless_pan_dev": "/dev/ttySC0",
+            "brushless_tilt_dev": "/dev/ttySC1",
+            "brushless_pan_txden": 22,
+            "brushless_tilt_txden": 27,
+            "brushless_pan_direction_sign": 1,
+            "brushless_tilt_direction_sign": 1,
+            "brushless_pan_speed_dps": 120.0,
+            "brushless_tilt_speed_dps": 120.0,
             "imu_port": "/dev/ttyUSB0",
             "imu_baudrate": 9600,
             "imu_use_6axis": True,
             "imu_output_hz": 50,
             "pan_id": 1,
-            "tilt_id": 2,
+            "tilt_id": 1,
             "move_time_ms": 40,
             "control_period_ms": 50,
             "kp_x": 0.0075,
@@ -365,7 +475,7 @@ class CircleTrackerGUI:
             "ki_y": 0.02,
             "kd_y": 0.000005,
             "deadband": 3.0,
-            "max_delta_deg_per_sec": 30.0,
+            "max_delta_deg_per_sec": 120.0,
             "exposure": 0.0,
             "gain": 8.0,
             "ksize": 5,
@@ -379,12 +489,12 @@ class CircleTrackerGUI:
             "camera_fps": 60,
             "laser_align_mode": False,
             "laser_threshold": 240,
-            "pan_min": -90.0,
-            "pan_max": 90.0,
+            "pan_min": -180.0,
+            "pan_max": 180.0,
             "tilt_min": -90.0,
             "tilt_max": 90.0,
-            "hw_pan_min": -90.0,
-            "hw_pan_max": 90.0,
+            "hw_pan_min": -180.0,
+            "hw_pan_max": 180.0,
             "hw_tilt_min": -90.0,
             "hw_tilt_max": 90.0,
             "kalman_process_noise": 0.03,
@@ -436,6 +546,14 @@ class CircleTrackerGUI:
                 "port": self.port.get(),
                 "servo_mode": self.servo_mode.get(),
                 "baudrate": safe_int(self.baudrate, "baudrate"),
+                "brushless_pan_dev": str(self.brushless_pan_dev.get()),
+                "brushless_tilt_dev": str(self.brushless_tilt_dev.get()),
+                "brushless_pan_txden": safe_int(self.brushless_pan_txden, "brushless_pan_txden"),
+                "brushless_tilt_txden": safe_int(self.brushless_tilt_txden, "brushless_tilt_txden"),
+                "brushless_pan_direction_sign": safe_int(self.brushless_pan_direction_sign, "brushless_pan_direction_sign"),
+                "brushless_tilt_direction_sign": safe_int(self.brushless_tilt_direction_sign, "brushless_tilt_direction_sign"),
+                "brushless_pan_speed_dps": safe_float(self.brushless_pan_speed_dps, "brushless_pan_speed_dps"),
+                "brushless_tilt_speed_dps": safe_float(self.brushless_tilt_speed_dps, "brushless_tilt_speed_dps"),
                 "imu_port": str(self.imu_port.get()),
                 "imu_baudrate": safe_int(self.imu_baudrate, "imu_baudrate"),
                 "imu_use_6axis": safe_bool(self.imu_use_6axis),
@@ -501,9 +619,17 @@ class CircleTrackerGUI:
     def _get_settings(self):
         # 实时从GUI变量读取，确保修改立即生效
         defaults = {
-            "servo_mode": "控制板",
+            "servo_mode": "无刷RS485",
             "port": "/dev/ttyAMA1",
-            "baudrate": 9600,
+            "baudrate": 115200,
+            "brushless_pan_dev": "/dev/ttySC0",
+            "brushless_tilt_dev": "/dev/ttySC1",
+            "brushless_pan_txden": 22,
+            "brushless_tilt_txden": 27,
+            "brushless_pan_direction_sign": 1,
+            "brushless_tilt_direction_sign": 1,
+            "brushless_pan_speed_dps": 120.0,
+            "brushless_tilt_speed_dps": 120.0,
             "imu_port": "/dev/ttyUSB0",
             "imu_baudrate": 9600,
             "imu_use_6axis": True,
@@ -520,7 +646,7 @@ class CircleTrackerGUI:
             "imu_hz_offset": 0,
             "imu_az_reference_g": 1.0,
             "pan_id": 1,
-            "tilt_id": 2,
+            "tilt_id": 1,
             "move_time_ms": 40,
             "control_period_ms": 50,
             "track_enabled": True,
@@ -533,7 +659,7 @@ class CircleTrackerGUI:
             "ki_y": 0.025,
             "kd_y": 0.000005,
             "deadband": 3.0,
-            "max_delta_deg_per_sec": 30.0,
+            "max_delta_deg_per_sec": 120.0,
             "exposure": 10000,
             "gain": 1.0,
             "ae_enable": True,
@@ -545,8 +671,8 @@ class CircleTrackerGUI:
             "max_radius": 120,
             "x_bias": 0,
             "y_bias": 0,
-            "pan_min": -90.0,
-            "pan_max": 90.0,
+            "pan_min": -180.0,
+            "pan_max": 180.0,
             "tilt_min": -90.0,
             "tilt_max": 90.0,
             "kalman_process_noise": 0.03,
@@ -584,6 +710,14 @@ class CircleTrackerGUI:
             "servo_mode": str(self.servo_mode.get()) if self.servo_mode.get() else defaults["servo_mode"],
             "port": str(self.port.get()) if self.port.get() else defaults["port"],
             "baudrate": safe_int(self.baudrate, "baudrate"),
+            "brushless_pan_dev": str(self.brushless_pan_dev.get()) if self.brushless_pan_dev.get() else defaults["brushless_pan_dev"],
+            "brushless_tilt_dev": str(self.brushless_tilt_dev.get()) if self.brushless_tilt_dev.get() else defaults["brushless_tilt_dev"],
+            "brushless_pan_txden": safe_int(self.brushless_pan_txden, "brushless_pan_txden"),
+            "brushless_tilt_txden": safe_int(self.brushless_tilt_txden, "brushless_tilt_txden"),
+            "brushless_pan_direction_sign": safe_int(self.brushless_pan_direction_sign, "brushless_pan_direction_sign"),
+            "brushless_tilt_direction_sign": safe_int(self.brushless_tilt_direction_sign, "brushless_tilt_direction_sign"),
+            "brushless_pan_speed_dps": safe_float(self.brushless_pan_speed_dps, "brushless_pan_speed_dps"),
+            "brushless_tilt_speed_dps": safe_float(self.brushless_tilt_speed_dps, "brushless_tilt_speed_dps"),
             "imu_port": str(self.imu_port.get()) if self.imu_port.get() else defaults["imu_port"],
             "imu_baudrate": safe_int(self.imu_baudrate, "imu_baudrate"),
             "imu_use_6axis": safe_bool(self.imu_use_6axis, "imu_use_6axis"),
@@ -667,6 +801,14 @@ class CircleTrackerGUI:
             "servo_mode": self.servo_mode,
             "port": self.port,
             "baudrate": self.baudrate,
+            "brushless_pan_dev": self.brushless_pan_dev,
+            "brushless_tilt_dev": self.brushless_tilt_dev,
+            "brushless_pan_txden": self.brushless_pan_txden,
+            "brushless_tilt_txden": self.brushless_tilt_txden,
+            "brushless_pan_direction_sign": self.brushless_pan_direction_sign,
+            "brushless_tilt_direction_sign": self.brushless_tilt_direction_sign,
+            "brushless_pan_speed_dps": self.brushless_pan_speed_dps,
+            "brushless_tilt_speed_dps": self.brushless_tilt_speed_dps,
             "imu_port": self.imu_port,
             "imu_baudrate": self.imu_baudrate,
             "imu_use_6axis": self.imu_use_6axis,
@@ -750,6 +892,14 @@ class CircleTrackerGUI:
                 "servo_mode": self.servo_mode.get(),
                 "port": self.port.get(),
                 "baudrate": int(self.baudrate.get()),
+                "brushless_pan_dev": self.brushless_pan_dev.get(),
+                "brushless_tilt_dev": self.brushless_tilt_dev.get(),
+                "brushless_pan_txden": int(self.brushless_pan_txden.get()),
+                "brushless_tilt_txden": int(self.brushless_tilt_txden.get()),
+                "brushless_pan_direction_sign": int(self.brushless_pan_direction_sign.get()),
+                "brushless_tilt_direction_sign": int(self.brushless_tilt_direction_sign.get()),
+                "brushless_pan_speed_dps": float(self.brushless_pan_speed_dps.get()),
+                "brushless_tilt_speed_dps": float(self.brushless_tilt_speed_dps.get()),
                 "imu_port": self.imu_port.get(),
                 "imu_baudrate": int(self.imu_baudrate.get()),
                 "imu_use_6axis": bool(self.imu_use_6axis.get()),
@@ -837,6 +987,14 @@ class CircleTrackerGUI:
             self.servo_mode,
             self.port,
             self.baudrate,
+            self.brushless_pan_dev,
+            self.brushless_tilt_dev,
+            self.brushless_pan_txden,
+            self.brushless_tilt_txden,
+            self.brushless_pan_direction_sign,
+            self.brushless_tilt_direction_sign,
+            self.brushless_pan_speed_dps,
+            self.brushless_tilt_speed_dps,
             self.imu_port,
             self.imu_baudrate,
             self.imu_use_6axis,
@@ -947,11 +1105,23 @@ class CircleTrackerGUI:
         r += 1
         self._grid_entry(tab_basic, r, 0, "波特率", self.baudrate, width=10)
         ttk.Label(tab_basic, text="控制方式").grid(row=r, column=2, sticky="w", padx=(0, 6), pady=(2, 2))
-        mode_combo = ttk.Combobox(tab_basic, textvariable=self.servo_mode, values=("调试板", "控制板"), state="readonly", width=8)
+        mode_combo = ttk.Combobox(tab_basic, textvariable=self.servo_mode, values=("调试板", "控制板", "无刷RS485"), state="readonly", width=8)
         mode_combo.grid(row=r, column=3, sticky="w", pady=(2, 2))
         r += 1
         self._grid_entry(tab_basic, r, 0, "水平ID", self.pan_id, width=8)
         self._grid_entry(tab_basic, r, 2, "俯仰ID", self.tilt_id, width=8)
+        r += 1
+        self._grid_entry(tab_basic, r, 0, "水平串口", self.brushless_pan_dev, width=12)
+        self._grid_entry(tab_basic, r, 2, "俯仰串口", self.brushless_tilt_dev, width=12)
+        r += 1
+        self._grid_entry(tab_basic, r, 0, "水平TXDEN", self.brushless_pan_txden, width=8)
+        self._grid_entry(tab_basic, r, 2, "俯仰TXDEN", self.brushless_tilt_txden, width=8)
+        r += 1
+        self._grid_entry(tab_basic, r, 0, "水平方向", self.brushless_pan_direction_sign, width=8)
+        self._grid_entry(tab_basic, r, 2, "俯仰方向", self.brushless_tilt_direction_sign, width=8)
+        r += 1
+        self._grid_entry(tab_basic, r, 0, "水平速度dps", self.brushless_pan_speed_dps, width=8)
+        self._grid_entry(tab_basic, r, 2, "俯仰速度dps", self.brushless_tilt_speed_dps, width=8)
         r += 1
         self._grid_entry(tab_basic, r, 0, "控制周期ms", self.control_period_ms, width=8)
         self._grid_entry(tab_basic, r, 2, "点动角度", self.jog_step_deg, width=8)
@@ -2416,6 +2586,18 @@ class CircleTrackerGUI:
                 
         return self._bus_servo_cls
 
+    def _get_brushless_motor_classes(self):
+        if self._brushless_motor_config_cls is not None and self._brushless_motor_cls is not None:
+            return self._brushless_motor_config_cls, self._brushless_motor_cls
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        module = _load_module(
+            "_brushless_dual_driver_v1",
+            os.path.join(base_dir, "brushless_motor", "dual_rs485_motor_driver_v1.py"),
+        )
+        self._brushless_motor_config_cls = module.MotorConfig
+        self._brushless_motor_cls = module.LkMotor
+        return self._brushless_motor_config_cls, self._brushless_motor_cls
+
     def _release_servo(self):
         if self.servo is not None:
             try:
@@ -2436,6 +2618,8 @@ class CircleTrackerGUI:
     def _on_servo_mode_change(self, *_):
         if self.servo_mode.get() == "控制板":
             self.baudrate.set(9600)
+        elif self.servo_mode.get() == "无刷RS485":
+            self.baudrate.set(115200)
         else:
             self.baudrate.set(115200)
         self._release_servo()
@@ -2462,6 +2646,37 @@ class CircleTrackerGUI:
         settings = self._get_settings()
         self.active_pan_id = settings["pan_id"]
         self.active_tilt_id = settings["tilt_id"]
+        if settings.get("servo_mode") == "无刷RS485":
+            motor_config_cls, motor_cls = self._get_brushless_motor_classes()
+            self.servo = BrushlessDualServoAdapter(
+                motor_config_cls=motor_config_cls,
+                motor_cls=motor_cls,
+                pan_id=self.active_pan_id,
+                tilt_id=self.active_tilt_id,
+                pan_dev=settings["brushless_pan_dev"],
+                tilt_dev=settings["brushless_tilt_dev"],
+                pan_txden=settings["brushless_pan_txden"],
+                tilt_txden=settings["brushless_tilt_txden"],
+                pan_direction_sign=settings["brushless_pan_direction_sign"],
+                tilt_direction_sign=settings["brushless_tilt_direction_sign"],
+                pan_speed_dps=settings["brushless_pan_speed_dps"],
+                tilt_speed_dps=settings["brushless_tilt_speed_dps"],
+                pan_min_deg=settings["pan_min"],
+                pan_max_deg=settings["pan_max"],
+                tilt_min_deg=settings["tilt_min"],
+                tilt_max_deg=settings["tilt_max"],
+            )
+            self.servo.set_angles([(self.active_pan_id, 0.0), (self.active_tilt_id, 0.0)])
+            self.servo.move_angle(wait=False)
+            self.current_pan_angle = 0.0
+            self.current_tilt_angle = 0.0
+            self.hw_pan_min.set(float(settings["pan_min"]))
+            self.hw_pan_max.set(float(settings["pan_max"]))
+            self.hw_tilt_min.set(float(settings["tilt_min"]))
+            self.hw_tilt_max.set(float(settings["tilt_max"]))
+            self.status_text.set("无刷RS485已连接")
+            self.servo_status_mode.set(settings.get("servo_mode"))
+            return
         if settings.get("servo_mode") == "控制板":
             self._load_board_modules()
             transport = self._board_transport_cls(
