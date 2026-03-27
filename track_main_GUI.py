@@ -124,6 +124,8 @@ class BrushlessDualServoAdapter:
         tilt_id,
         pan_dev,
         tilt_dev,
+        pan_baudrate,
+        tilt_baudrate,
         pan_txden,
         tilt_txden,
         pan_direction_sign,
@@ -144,6 +146,7 @@ class BrushlessDualServoAdapter:
                 name="yaw",
                 motor_id=int(pan_id),
                 dev=str(pan_dev),
+                baudrate=int(pan_baudrate),
                 txden_pin=int(pan_txden),
                 direction_sign=int(pan_direction_sign),
                 default_speed_dps=float(pan_speed_dps),
@@ -156,6 +159,7 @@ class BrushlessDualServoAdapter:
                 name="pitch",
                 motor_id=int(tilt_id),
                 dev=str(tilt_dev),
+                baudrate=int(tilt_baudrate),
                 txden_pin=int(tilt_txden),
                 direction_sign=int(tilt_direction_sign),
                 default_speed_dps=float(tilt_speed_dps),
@@ -283,6 +287,8 @@ class CircleTrackerGUI:
         self.baudrate = tk.IntVar(value=1000000)
         self.brushless_pan_dev = tk.StringVar(value="/dev/ttySC0")
         self.brushless_tilt_dev = tk.StringVar(value="/dev/ttySC1")
+        self.brushless_pan_baudrate = tk.IntVar(value=1000000)
+        self.brushless_tilt_baudrate = tk.IntVar(value=1000000)
         self.brushless_pan_txden = tk.IntVar(value=22)
         self.brushless_tilt_txden = tk.IntVar(value=27)
         self.brushless_pan_direction_sign = tk.IntVar(value=1)
@@ -463,6 +469,8 @@ class CircleTrackerGUI:
             "baudrate": 1000000,
             "brushless_pan_dev": "/dev/ttySC0",
             "brushless_tilt_dev": "/dev/ttySC1",
+            "brushless_pan_baudrate": 1000000,
+            "brushless_tilt_baudrate": 1000000,
             "brushless_pan_txden": 22,
             "brushless_tilt_txden": 27,
             "brushless_pan_direction_sign": 1,
@@ -559,6 +567,8 @@ class CircleTrackerGUI:
                 "baudrate": safe_int(self.baudrate, "baudrate"),
                 "brushless_pan_dev": str(self.brushless_pan_dev.get()),
                 "brushless_tilt_dev": str(self.brushless_tilt_dev.get()),
+                "brushless_pan_baudrate": safe_int(self.brushless_pan_baudrate, "brushless_pan_baudrate"),
+                "brushless_tilt_baudrate": safe_int(self.brushless_tilt_baudrate, "brushless_tilt_baudrate"),
                 "brushless_pan_txden": safe_int(self.brushless_pan_txden, "brushless_pan_txden"),
                 "brushless_tilt_txden": safe_int(self.brushless_tilt_txden, "brushless_tilt_txden"),
                 "brushless_pan_direction_sign": safe_int(self.brushless_pan_direction_sign, "brushless_pan_direction_sign"),
@@ -637,6 +647,8 @@ class CircleTrackerGUI:
             "baudrate": 1000000,
             "brushless_pan_dev": "/dev/ttySC0",
             "brushless_tilt_dev": "/dev/ttySC1",
+            "brushless_pan_baudrate": 1000000,
+            "brushless_tilt_baudrate": 1000000,
             "brushless_pan_txden": 22,
             "brushless_tilt_txden": 27,
             "brushless_pan_direction_sign": 1,
@@ -727,6 +739,8 @@ class CircleTrackerGUI:
             "baudrate": safe_int(self.baudrate, "baudrate"),
             "brushless_pan_dev": str(self.brushless_pan_dev.get()) if self.brushless_pan_dev.get() else defaults["brushless_pan_dev"],
             "brushless_tilt_dev": str(self.brushless_tilt_dev.get()) if self.brushless_tilt_dev.get() else defaults["brushless_tilt_dev"],
+            "brushless_pan_baudrate": safe_int(self.brushless_pan_baudrate, "brushless_pan_baudrate"),
+            "brushless_tilt_baudrate": safe_int(self.brushless_tilt_baudrate, "brushless_tilt_baudrate"),
             "brushless_pan_txden": safe_int(self.brushless_pan_txden, "brushless_pan_txden"),
             "brushless_tilt_txden": safe_int(self.brushless_tilt_txden, "brushless_tilt_txden"),
             "brushless_pan_direction_sign": safe_int(self.brushless_pan_direction_sign, "brushless_pan_direction_sign"),
@@ -820,6 +834,8 @@ class CircleTrackerGUI:
             "baudrate": self.baudrate,
             "brushless_pan_dev": self.brushless_pan_dev,
             "brushless_tilt_dev": self.brushless_tilt_dev,
+            "brushless_pan_baudrate": self.brushless_pan_baudrate,
+            "brushless_tilt_baudrate": self.brushless_tilt_baudrate,
             "brushless_pan_txden": self.brushless_pan_txden,
             "brushless_tilt_txden": self.brushless_tilt_txden,
             "brushless_pan_direction_sign": self.brushless_pan_direction_sign,
@@ -913,6 +929,8 @@ class CircleTrackerGUI:
                 "baudrate": int(self.baudrate.get()),
                 "brushless_pan_dev": self.brushless_pan_dev.get(),
                 "brushless_tilt_dev": self.brushless_tilt_dev.get(),
+                "brushless_pan_baudrate": int(self.brushless_pan_baudrate.get()),
+                "brushless_tilt_baudrate": int(self.brushless_tilt_baudrate.get()),
                 "brushless_pan_txden": int(self.brushless_pan_txden.get()),
                 "brushless_tilt_txden": int(self.brushless_tilt_txden.get()),
                 "brushless_pan_direction_sign": int(self.brushless_pan_direction_sign.get()),
@@ -1010,6 +1028,8 @@ class CircleTrackerGUI:
             self.baudrate,
             self.brushless_pan_dev,
             self.brushless_tilt_dev,
+            self.brushless_pan_baudrate,
+            self.brushless_tilt_baudrate,
             self.brushless_pan_txden,
             self.brushless_tilt_txden,
             self.brushless_pan_direction_sign,
@@ -1143,6 +1163,9 @@ class CircleTrackerGUI:
         r += 1
         self._grid_entry(tab_basic, r, 0, "水平串口", self.brushless_pan_dev, width=12)
         self._grid_entry(tab_basic, r, 2, "俯仰串口", self.brushless_tilt_dev, width=12)
+        r += 1
+        self._grid_entry(tab_basic, r, 0, "水平波特率", self.brushless_pan_baudrate, width=10)
+        self._grid_entry(tab_basic, r, 2, "俯仰波特率", self.brushless_tilt_baudrate, width=10)
         r += 1
         self._grid_entry(tab_basic, r, 0, "水平TXDEN", self.brushless_pan_txden, width=8)
         self._grid_entry(tab_basic, r, 2, "俯仰TXDEN", self.brushless_tilt_txden, width=8)
@@ -2711,6 +2734,8 @@ class CircleTrackerGUI:
                 tilt_id=self.active_tilt_id,
                 pan_dev=settings["brushless_pan_dev"],
                 tilt_dev=settings["brushless_tilt_dev"],
+                pan_baudrate=settings["brushless_pan_baudrate"],
+                tilt_baudrate=settings["brushless_tilt_baudrate"],
                 pan_txden=settings["brushless_pan_txden"],
                 tilt_txden=settings["brushless_tilt_txden"],
                 pan_direction_sign=settings["brushless_pan_direction_sign"],
