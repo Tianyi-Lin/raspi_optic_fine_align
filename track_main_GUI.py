@@ -15,8 +15,6 @@ from PIL import Image, ImageTk
 from picamera2 import Picamera2, Preview
 
 from PID import PID
-from laser_ranger_passive import LaserRangerQueryMonitor
-from laser_ranger_setting import configure_laser_module
 
 
 def _load_module(name, path):
@@ -84,36 +82,6 @@ class Kalman2D:
         return float(estimate[0]), float(estimate[1]), float(prediction[0]), float(prediction[1])
 
 
-class BoardServoAdapter:
-    def __init__(self, driver, servo_ids, moving_time=50):
-        self.driver = driver
-        self.servo_ids = list(servo_ids)
-        self.moving_time = int(moving_time)
-        self._pending_positions = {sid: 500 for sid in self.servo_ids}
-
-    def set_angles(self, angles):
-        for servo_id, angle in angles:
-            angle_index = 500 + float(angle) / 0.24
-            angle_index = max(0, min(1000, int(round(angle_index))))
-            self._pending_positions[int(servo_id)] = angle_index
-
-    def move_angle(self, wait=True):
-        positions = [(sid, self._pending_positions.get(sid, 500)) for sid in self.servo_ids]
-        self.driver.move_servos(positions, self.moving_time)
-        if wait:
-            time.sleep(self.moving_time / 1000.0)
-
-    def read_positions(self):
-        result = self.driver.read_servo_positions(self.servo_ids)
-        return {item.servo_id: item.position for item in result}
-
-    def read_voltage_mv(self):
-        return self.driver.get_battery_voltage_mv()
-
-    def cleanup(self):
-        self.driver.close()
-
-
 class CircleTrackerGUI:
     def __init__(self, root):
         self.root = root
@@ -125,7 +93,6 @@ class CircleTrackerGUI:
         self.tracking_active = False
         self.picam2 = None
         self.servo = None
-        self.laser_ranger = None  # 激光测距模块
         self.worker_thread = None
         self.detect_thread = None
         self.stop_event = threading.Event()
@@ -148,21 +115,17 @@ class CircleTrackerGUI:
         self.active_pan_id = 1
         self.active_tilt_id = 2
         self.jog_step_deg = tk.DoubleVar(value=1.0)
-        # self.servo_mode = tk.StringVar(value="调试板")
-        self.servo_mode = tk.StringVar(value="控制板")
-        self.servo_status_mode = tk.StringVar(value=self.servo_mode.get())
+        self.servo_status_mode = tk.StringVar(value="调试板")
         self.servo_status_pan = tk.StringVar(value="-")
         self.servo_status_tilt = tk.StringVar(value="-")
         self.servo_status_voltage = tk.StringVar(value="-")
         self.latest_servo_status = None
         self.last_servo_status_time = 0.0
-        self._board_transport_cls = None
-        self._board_driver_cls = None
         self._bus_servo_cls = None
 
         self.port = tk.StringVar(value="/dev/ttyAMA1")
         # self.baudrate = tk.IntVar(value=115200)
-        self.baudrate = tk.IntVar(value=9600)
+        self.baudrate = tk.IntVar(value=115200)
         self.pan_id = tk.IntVar(value=1)
         self.tilt_id = tk.IntVar(value=2)
         self.move_time_ms = tk.IntVar(value=40)
@@ -223,9 +186,6 @@ class CircleTrackerGUI:
         self.last_cam_frame_id = 0
         self.last_cam_time = 0.0
         
-        # 激光测距查询控制
-        self.last_laser_query_time = 0.0
-        
         # 记录激光是否已经进入圆形标志物内部的状态
         self.laser_locked_in_circle = False
 
@@ -235,65 +195,33 @@ class CircleTrackerGUI:
 
         self._load_settings()
         self._build_ui()
-        self.servo_mode.trace_add("write", self._on_servo_mode_change)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.root.bind("<Escape>", lambda _e: self.on_close())
         self.root.bind("q", lambda _e: self.on_close())
         self._update_settings_from_vars()
         
-        # 1. 强制配置激光测距模块为查询模式 (Passive / Inquire)
-        configure_laser_module(
-            port="/dev/ttyAMA3", 
-            baudrate=115200, 
-            module_id=0,
-            output_mode="inquire",
-            range_mode="medium",
-            interface_mode="uart",
-            uart_baudrate=115200
-        )
-        
-        # 释放激光配置串口后，硬延时 1 秒，等待系统资源完全释放和稳定
-        print("[INFO] Laser configured. Waiting 1.0s before initializing servos...")
-        time.sleep(1.0)
-        
-        # 2. 尝试提前初始化舵机并在GUI显示前立即回正
+        # 启动前尝试初始化舵机并在GUI显示前立即回正
         try:
             # 确保使用正确的配置初始化舵机
-            fallback_mode = "控制板"
             try:
                 settings_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tracker_settings.txt")
                 if os.path.exists(settings_path):
                     with open(settings_path, "r", encoding="utf-8") as f:
                         data = json.load(f)
-                        fallback_mode = str(data.get("servo_mode", "控制板")).strip()
+                        _ = data
             except Exception:
                 pass
-            
-            # 在启动前设置模式，确保 _ensure_servo 使用正确的类
-            self.servo_mode.set(fallback_mode)
             self._ensure_servo()
         except Exception as exc:
             import traceback
             traceback.print_exc()
             print(f"[WARNING] Servo init failed before GUI start: {exc}")
             
-        # 舵机回正指令发送后，硬延时 1 秒，等待舵机机械运动到位及总线电平恢复
-        print("[INFO] Servos centered. Waiting 1.0s before attaching laser monitor...")
-        time.sleep(1.0)
-            
-        # 3. 初始化激光测距模块 (被动查询模式)
-        # 注意：这里不再调用 start() 开启后台死循环，而是由主循环按需调用 query_once()
-        try:
-            self.laser_ranger = LaserRangerQueryMonitor(port="/dev/ttyAMA3", baudrate=115200, module_id=0, history_len=10)
-        except Exception as exc:
-            print(f"[WARNING] Laser Ranger init failed: {exc}")
-            
         self.root.after(10, self._start_runtime)
 
     def _update_settings_from_vars(self):
         fallback = {
-            "servo_mode": "控制板",
-            "baudrate": 9600,
+            "baudrate": 115200,
             "pan_id": 1,
             "tilt_id": 2,
             "move_time_ms": 40,
@@ -353,7 +281,7 @@ class CircleTrackerGUI:
         with self.settings_lock:
             self.settings = {
                 "port": self.port.get(),
-                "servo_mode": self.servo_mode.get(),
+                "servo_mode": "调试板",
                 "baudrate": safe_int(self.baudrate, "baudrate"),
                 "pan_id": safe_int(self.pan_id, "pan_id"),
                 "tilt_id": safe_int(self.tilt_id, "tilt_id"),
@@ -395,9 +323,8 @@ class CircleTrackerGUI:
     def _get_settings(self):
         # 实时从GUI变量读取，确保修改立即生效
         defaults = {
-            "servo_mode": "控制板",
             "port": "/dev/ttyAMA1",
-            "baudrate": 9600,
+            "baudrate": 115200,
             "pan_id": 1,
             "tilt_id": 2,
             "move_time_ms": 40,
@@ -449,7 +376,7 @@ class CircleTrackerGUI:
             except Exception:
                 return defaults[key]
         return {
-            "servo_mode": str(self.servo_mode.get()) if self.servo_mode.get() else defaults["servo_mode"],
+            "servo_mode": "调试板",
             "port": str(self.port.get()) if self.port.get() else defaults["port"],
             "baudrate": safe_int(self.baudrate, "baudrate"),
             "pan_id": safe_int(self.pan_id, "pan_id"),
@@ -507,7 +434,6 @@ class CircleTrackerGUI:
         except Exception:
             return
         var_map = {
-            "servo_mode": self.servo_mode,
             "port": self.port,
             "baudrate": self.baudrate,
             "pan_id": self.pan_id,
@@ -556,16 +482,13 @@ class CircleTrackerGUI:
             elif isinstance(var, tk.DoubleVar):
                 var.set(float(value))
             else:
-                if key == "servo_mode":
-                    var.set(str(value).strip())
-                else:
-                    var.set(value)
+                var.set(value)
 
     def _save_settings(self):
         path = self._settings_path()
         try:
             data = {
-                "servo_mode": self.servo_mode.get(),
+                "servo_mode": "调试板",
                 "port": self.port.get(),
                 "baudrate": int(self.baudrate.get()),
                 "pan_id": int(self.pan_id.get()),
@@ -646,8 +569,7 @@ class CircleTrackerGUI:
         r += 1
         self._grid_entry(tab_basic, r, 0, "波特率", self.baudrate, width=10)
         ttk.Label(tab_basic, text="控制方式").grid(row=r, column=2, sticky="w", padx=(0, 6), pady=(2, 2))
-        mode_combo = ttk.Combobox(tab_basic, textvariable=self.servo_mode, values=("调试板", "控制板"), state="readonly", width=8)
-        mode_combo.grid(row=r, column=3, sticky="w", pady=(2, 2))
+        ttk.Label(tab_basic, text="调试板").grid(row=r, column=3, sticky="w", pady=(2, 2))
         r += 1
         self._grid_entry(tab_basic, r, 0, "水平ID", self.pan_id, width=8)
         self._grid_entry(tab_basic, r, 2, "俯仰ID", self.tilt_id, width=8)
@@ -1158,37 +1080,15 @@ class CircleTrackerGUI:
                     )
                     self.servo.move_angle(wait=False)
 
-                # 获取当前激光测距数据 (如果在死区内，且距离上次查询超过1秒)
-                current_distance = -1.0
-                if self.laser_ranger is not None and abs(error_x) <= deadband and abs(error_y) <= deadband and circle_found:
-                    now = time.time()
-                    if now - self.last_laser_query_time >= 1.0:
-                        self.last_laser_query_time = now
-                        # 单次发起查询
-                        if self.laser_ranger.query_once():
-                            dist_m = self.laser_ranger.distance_m
-                            print(f"[测距结果] 目标对准！当前距离: {dist_m:.3f} m, 信号强度: {self.laser_ranger.signal_strength}")
-                            
-                    # 获取最新距离数据用于显示
-                    if len(self.laser_ranger.distance_m_data) > 0:
-                        current_distance = self.laser_ranger.distance_m_data[-1]
-
                 servo_status = self.latest_servo_status
                 now = time.time()
                 if self.servo is not None and now - self.last_servo_status_time >= 0.5:
                     try:
-                        if s.get("servo_mode") == "控制板":
-                            pos_map = self.servo.read_positions()
-                            pan_pos = pos_map.get(self.active_pan_id)
-                            tilt_pos = pos_map.get(self.active_tilt_id)
-                            voltage = self.servo.read_voltage_mv()
-                        else:
-                            pos_list = self.servo.read_servos_angle()
-                            pos_map = {sid: pos for sid, pos in pos_list}
-                            pan_pos = pos_map.get(self.active_pan_id)
-                            tilt_pos = pos_map.get(self.active_tilt_id)
-                            voltage = None
-                        servo_status = (s.get("servo_mode"), pan_pos, tilt_pos, voltage)
+                        pos_list = self.servo.read_servos_angle()
+                        pos_map = {sid: pos for sid, pos in pos_list}
+                        pan_pos = pos_map.get(self.active_pan_id)
+                        tilt_pos = pos_map.get(self.active_tilt_id)
+                        servo_status = ("调试板", pan_pos, tilt_pos, None)
                         self.latest_servo_status = servo_status
                         self.last_servo_status_time = now
                     except Exception:
@@ -1213,7 +1113,6 @@ class CircleTrackerGUI:
                     (pan_at_min, pan_at_max, tilt_at_min, tilt_at_max),
                     s.get("laser_threshold", 240),
                     deadband,
-                    current_distance,
                     servo_status
                 )
                 try:
@@ -1330,7 +1229,6 @@ class CircleTrackerGUI:
                 bounds,
                 laser_threshold,
                 deadband,
-                current_distance,
                 servo_status
             ) = latest
             
@@ -1412,8 +1310,6 @@ class CircleTrackerGUI:
                 # 检查是否进入死区 (对准完成)
                 if abs(error_x) <= deadband and abs(error_y) <= deadband and circle_found:
                     cv2.putText(frame_rgb_disp, "ALIGNMENT COMPLETE", (10, h - 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
-                    if current_distance > 0:
-                        cv2.putText(frame_rgb_disp, f"{current_distance:.3f} m", (10, h - 70), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
                 
                 top_row = np.hstack((frame_rgb_disp, full_green))
                 bottom_row = np.hstack((full_red, full_bin))
@@ -1539,38 +1435,6 @@ class CircleTrackerGUI:
         self.last_gain = None
         self.last_fps = framerate
 
-    def _load_board_modules(self):
-        if self._board_transport_cls is not None and self._board_driver_cls is not None:
-            return
-        base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bus_servo_ctrl_board")
-        original_protocol = sys.modules.get("protocol")
-        original_transport = sys.modules.get("transport")
-        original_driver = sys.modules.get("driver")
-        try:
-            board_protocol = _load_module("_board_protocol", os.path.join(base_dir, "protocol.py"))
-            sys.modules["protocol"] = board_protocol
-            
-            board_transport = _load_module("_board_transport", os.path.join(base_dir, "transport.py"))
-            sys.modules["transport"] = board_transport
-            
-            board_driver = _load_module("_board_driver", os.path.join(base_dir, "driver.py"))
-            sys.modules["driver"] = board_driver
-        finally:
-            if original_protocol is not None:
-                sys.modules["protocol"] = original_protocol
-            else:
-                sys.modules.pop("protocol", None)
-            if original_transport is not None:
-                sys.modules["transport"] = original_transport
-            else:
-                sys.modules.pop("transport", None)
-            if original_driver is not None:
-                sys.modules["driver"] = original_driver
-            else:
-                sys.modules.pop("driver", None)
-        self._board_transport_cls = board_transport.SerialTransport
-        self._board_driver_cls = board_driver.BusServoBoardDriver
-
     def _get_bus_servo_cls(self):
         if self._bus_servo_cls is not None:
             return self._bus_servo_cls
@@ -1612,21 +1476,14 @@ class CircleTrackerGUI:
         self.servo = None
         self.latest_servo_status = None
         self.last_servo_status_time = 0.0
-        self.servo_status_mode.set(self.servo_mode.get())
+        self.servo_status_mode.set("调试板")
         self.servo_status_pan.set("-")
         self.servo_status_tilt.set("-")
         self.servo_status_voltage.set("-")
 
-    def _on_servo_mode_change(self, *_):
-        if self.servo_mode.get() == "控制板":
-            self.baudrate.set(9600)
-        else:
-            self.baudrate.set(115200)
-        self._release_servo()
-
     def _update_servo_status_labels(self, servo_status):
         if servo_status is None:
-            self.servo_status_mode.set(self.servo_mode.get())
+            self.servo_status_mode.set("调试板")
             self.servo_status_pan.set("-")
             self.servo_status_tilt.set("-")
             self.servo_status_voltage.set("-")
@@ -1635,10 +1492,7 @@ class CircleTrackerGUI:
         self.servo_status_mode.set(mode)
         self.servo_status_pan.set("-" if pan_pos is None else str(int(pan_pos)))
         self.servo_status_tilt.set("-" if tilt_pos is None else str(int(tilt_pos)))
-        if mode == "控制板":
-            self.servo_status_voltage.set("-" if voltage is None else f"{int(voltage)} mV")
-        else:
-            self.servo_status_voltage.set("-")
+        self.servo_status_voltage.set("-")
 
     def _ensure_servo(self):
         if self.servo is not None:
@@ -1646,31 +1500,6 @@ class CircleTrackerGUI:
         settings = self._get_settings()
         self.active_pan_id = settings["pan_id"]
         self.active_tilt_id = settings["tilt_id"]
-        if settings.get("servo_mode") == "控制板":
-            self._load_board_modules()
-            transport = self._board_transport_cls(
-                port=settings["port"],
-                baudrate=settings["baudrate"],
-                timeout=1.0,
-                debug=False,
-            )
-            driver = self._board_driver_cls(transport)
-            self.servo = BoardServoAdapter(
-                driver=driver,
-                servo_ids=[self.active_pan_id, self.active_tilt_id],
-                moving_time=settings["move_time_ms"],
-            )
-            self.servo.set_angles([(self.active_pan_id, 0.0), (self.active_tilt_id, 0.0)])
-            self.servo.move_angle(wait=False)
-            self.current_pan_angle = 0.0
-            self.current_tilt_angle = 0.0
-            self.hw_pan_min.set(-90.0)
-            self.hw_pan_max.set(90.0)
-            self.hw_tilt_min.set(-90.0)
-            self.hw_tilt_max.set(90.0)
-            self.status_text.set("控制板不支持硬件边界读取，已设为±90°")
-            self.servo_status_mode.set(settings.get("servo_mode"))
-            return
         bus_servo_cls = self._get_bus_servo_cls()
         self.servo = bus_servo_cls(
             port=settings["port"],
@@ -1858,12 +1687,6 @@ class CircleTrackerGUI:
             except Exception:
                 pass
             self.servo = None
-        if self.laser_ranger is not None:
-            try:
-                self.laser_ranger.stop()
-            except Exception:
-                pass
-            self.laser_ranger = None
         self.root.destroy()
 
     def _jog(self, delta_pan, delta_tilt):
