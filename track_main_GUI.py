@@ -431,8 +431,7 @@ class CircleTrackerGUI:
                 settings_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tracker_settings.txt")
                 if os.path.exists(settings_path):
                     with open(settings_path, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                        fallback_mode = str(data.get("servo_mode", "无刷RS485")).strip()
+                        _ = json.load(f)
             except Exception:
                 pass
             
@@ -1144,19 +1143,9 @@ class CircleTrackerGUI:
         tab_basic.columnconfigure(1, weight=1)
         tab_basic.columnconfigure(3, weight=1)
         r = 0
-        self.port_label = ttk.Label(tab_basic, text="串口")
-        self.port_label.grid(row=r, column=0, sticky="w", padx=(0, 6), pady=(2, 2))
-        self.port_entry = ttk.Entry(tab_basic, textvariable=self.port, width=18)
-        self.port_entry.grid(row=r, column=1, sticky="ew", pady=(2, 2))
-        self._grid_entry(tab_basic, r, 2, "移动时间ms", self.move_time_ms, width=8)
-        r += 1
-        self.baudrate_label = ttk.Label(tab_basic, text="波特率")
-        self.baudrate_label.grid(row=r, column=0, sticky="w", padx=(0, 6), pady=(2, 2))
-        self.baudrate_entry = ttk.Entry(tab_basic, textvariable=self.baudrate, width=10)
-        self.baudrate_entry.grid(row=r, column=1, sticky="ew", pady=(2, 2))
+        self._grid_entry(tab_basic, r, 0, "移动时间ms", self.move_time_ms, width=8)
         ttk.Label(tab_basic, text="控制方式").grid(row=r, column=2, sticky="w", padx=(0, 6), pady=(2, 2))
-        mode_combo = ttk.Combobox(tab_basic, textvariable=self.servo_mode, values=("调试板", "控制板", "无刷RS485"), state="readonly", width=8)
-        mode_combo.grid(row=r, column=3, sticky="w", pady=(2, 2))
+        ttk.Label(tab_basic, text="无刷RS485").grid(row=r, column=3, sticky="w", pady=(2, 2))
         r += 1
         self._grid_entry(tab_basic, r, 0, "水平ID", self.pan_id, width=8)
         self._grid_entry(tab_basic, r, 2, "俯仰ID", self.tilt_id, width=8)
@@ -2682,26 +2671,13 @@ class CircleTrackerGUI:
         self.servo_status_voltage.set("-")
 
     def _on_servo_mode_change(self, *_):
-        if self.servo_mode.get() == "控制板":
-            self.baudrate.set(9600)
-        elif self.servo_mode.get() == "无刷RS485":
-            self.baudrate.set(1000000)
-        else:
-            self.baudrate.set(115200)
-        self._refresh_servo_mode_ui()
+        if self.servo_mode.get() != "无刷RS485":
+            self.servo_mode.set("无刷RS485")
+            return
         self._release_servo()
 
     def _refresh_servo_mode_ui(self):
-        mode = self.servo_mode.get()
-        is_brushless = mode == "无刷RS485"
-        if hasattr(self, "port_label"):
-            self.port_label.configure(text="旧串口(非无刷)" if is_brushless else "串口")
-        if hasattr(self, "port_entry"):
-            self.port_entry.configure(state=(tk.DISABLED if is_brushless else tk.NORMAL))
-        if hasattr(self, "baudrate_label"):
-            self.baudrate_label.configure(text="旧波特率(非无刷)" if is_brushless else "波特率")
-        if hasattr(self, "baudrate_entry"):
-            self.baudrate_entry.configure(state=(tk.DISABLED if is_brushless else tk.NORMAL))
+        return
 
     def _update_servo_status_labels(self, servo_status):
         if servo_status is None:
