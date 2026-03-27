@@ -304,7 +304,7 @@ class CircleTrackerGUI:
         self.imu_hz_offset = tk.IntVar(value=0)
         self.imu_az_reference_g = tk.DoubleVar(value=1.0)
         self.pan_id = tk.IntVar(value=1)
-        self.tilt_id = tk.IntVar(value=1)
+        self.tilt_id = tk.IntVar(value=2)
         self.move_time_ms = tk.IntVar(value=40)
         self.control_period_ms = tk.IntVar(value=50)
         self.track_enabled = tk.BooleanVar(value=True)
@@ -472,7 +472,7 @@ class CircleTrackerGUI:
             "imu_use_6axis": True,
             "imu_output_hz": 50,
             "pan_id": 1,
-            "tilt_id": 1,
+            "tilt_id": 2,
             "move_time_ms": 40,
             "control_period_ms": 50,
             "kp_x": 0.0075,
@@ -653,7 +653,7 @@ class CircleTrackerGUI:
             "imu_hz_offset": 0,
             "imu_az_reference_g": 1.0,
             "pan_id": 1,
-            "tilt_id": 1,
+            "tilt_id": 2,
             "move_time_ms": 40,
             "control_period_ms": 50,
             "track_enabled": True,

@@ -128,13 +128,25 @@ class RS485Port:
             raise ResponseError(f"{self.dev} 读取长度不足: 期望 {n} 字节, 实际 {len(data)} 字节")
         return data
 
+    def _read_header_synced(self) -> bytes:
+        deadline = time.time() + max(0.02, self.timeout * 3.0)
+        while time.time() < deadline:
+            b0 = self.ser.read(1)
+            if not b0:
+                continue
+            if b0[0] != 0x3E:
+                continue
+            rest = self.ser.read(4)
+            if len(rest) != 4:
+                raise ResponseError(f"{self.dev} 回复头部不完整")
+            return b0 + rest
+        raise ResponseError(f"{self.dev} 回复超时或未找到帧头")
+
     def read_reply(self, expected_cmd: int, expected_id: int) -> bytes:
         """
         返回 payload 原始数据（不含 DATA_SUM）
         """
-        header = self.read_exact(5)
-        if header[0] != 0x3E:
-            raise ResponseError(f"{self.dev} 回复帧头错误: 0x{header[0]:02X}")
+        header = self._read_header_synced()
         cmd = header[1]
         motor_id = header[2]
         data_len = header[3]
