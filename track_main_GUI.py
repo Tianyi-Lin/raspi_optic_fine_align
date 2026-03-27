@@ -210,6 +210,14 @@ class BrushlessDualServoAdapter:
         except Exception:
             pass
         try:
+            self.pan_motor.motor_off()
+        except Exception:
+            pass
+        try:
+            self.tilt_motor.motor_off()
+        except Exception:
+            pass
+        try:
             self.pan_motor.close()
         except Exception:
             pass
