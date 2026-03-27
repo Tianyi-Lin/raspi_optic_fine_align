@@ -303,6 +303,9 @@ class CircleTrackerGUI:
         self.brushless_tilt_direction_sign = tk.IntVar(value=1)
         self.brushless_pan_speed_dps = tk.DoubleVar(value=120.0)
         self.brushless_tilt_speed_dps = tk.DoubleVar(value=120.0)
+        self.shutdown_pan_deg = tk.DoubleVar(value=0.0)
+        self.shutdown_tilt_deg = tk.DoubleVar(value=0.0)
+        self.shutdown_speed_dps = tk.DoubleVar(value=60.0)
         self.imu_port = tk.StringVar(value="/dev/ttyUSB0")
         self.imu_baudrate = tk.IntVar(value=9600)
         self.imu_use_6axis = tk.BooleanVar(value=True)
@@ -484,6 +487,9 @@ class CircleTrackerGUI:
             "brushless_tilt_direction_sign": 1,
             "brushless_pan_speed_dps": 120.0,
             "brushless_tilt_speed_dps": 120.0,
+            "shutdown_pan_deg": 0.0,
+            "shutdown_tilt_deg": 0.0,
+            "shutdown_speed_dps": 60.0,
             "imu_port": "/dev/ttyUSB0",
             "imu_baudrate": 9600,
             "imu_use_6axis": True,
@@ -582,6 +588,9 @@ class CircleTrackerGUI:
                 "brushless_tilt_direction_sign": safe_int(self.brushless_tilt_direction_sign, "brushless_tilt_direction_sign"),
                 "brushless_pan_speed_dps": safe_float(self.brushless_pan_speed_dps, "brushless_pan_speed_dps"),
                 "brushless_tilt_speed_dps": safe_float(self.brushless_tilt_speed_dps, "brushless_tilt_speed_dps"),
+                "shutdown_pan_deg": safe_float(self.shutdown_pan_deg, "shutdown_pan_deg"),
+                "shutdown_tilt_deg": safe_float(self.shutdown_tilt_deg, "shutdown_tilt_deg"),
+                "shutdown_speed_dps": safe_float(self.shutdown_speed_dps, "shutdown_speed_dps"),
                 "imu_port": str(self.imu_port.get()),
                 "imu_baudrate": safe_int(self.imu_baudrate, "imu_baudrate"),
                 "imu_use_6axis": safe_bool(self.imu_use_6axis),
@@ -662,6 +671,9 @@ class CircleTrackerGUI:
             "brushless_tilt_direction_sign": 1,
             "brushless_pan_speed_dps": 120.0,
             "brushless_tilt_speed_dps": 120.0,
+            "shutdown_pan_deg": 0.0,
+            "shutdown_tilt_deg": 0.0,
+            "shutdown_speed_dps": 60.0,
             "imu_port": "/dev/ttyUSB0",
             "imu_baudrate": 9600,
             "imu_use_6axis": True,
@@ -754,6 +766,9 @@ class CircleTrackerGUI:
             "brushless_tilt_direction_sign": safe_int(self.brushless_tilt_direction_sign, "brushless_tilt_direction_sign"),
             "brushless_pan_speed_dps": safe_float(self.brushless_pan_speed_dps, "brushless_pan_speed_dps"),
             "brushless_tilt_speed_dps": safe_float(self.brushless_tilt_speed_dps, "brushless_tilt_speed_dps"),
+            "shutdown_pan_deg": safe_float(self.shutdown_pan_deg, "shutdown_pan_deg"),
+            "shutdown_tilt_deg": safe_float(self.shutdown_tilt_deg, "shutdown_tilt_deg"),
+            "shutdown_speed_dps": safe_float(self.shutdown_speed_dps, "shutdown_speed_dps"),
             "imu_port": str(self.imu_port.get()) if self.imu_port.get() else defaults["imu_port"],
             "imu_baudrate": safe_int(self.imu_baudrate, "imu_baudrate"),
             "imu_use_6axis": safe_bool(self.imu_use_6axis, "imu_use_6axis"),
@@ -849,6 +864,9 @@ class CircleTrackerGUI:
             "brushless_tilt_direction_sign": self.brushless_tilt_direction_sign,
             "brushless_pan_speed_dps": self.brushless_pan_speed_dps,
             "brushless_tilt_speed_dps": self.brushless_tilt_speed_dps,
+            "shutdown_pan_deg": self.shutdown_pan_deg,
+            "shutdown_tilt_deg": self.shutdown_tilt_deg,
+            "shutdown_speed_dps": self.shutdown_speed_dps,
             "imu_port": self.imu_port,
             "imu_baudrate": self.imu_baudrate,
             "imu_use_6axis": self.imu_use_6axis,
@@ -944,6 +962,9 @@ class CircleTrackerGUI:
                 "brushless_tilt_direction_sign": int(self.brushless_tilt_direction_sign.get()),
                 "brushless_pan_speed_dps": float(self.brushless_pan_speed_dps.get()),
                 "brushless_tilt_speed_dps": float(self.brushless_tilt_speed_dps.get()),
+                "shutdown_pan_deg": float(self.shutdown_pan_deg.get()),
+                "shutdown_tilt_deg": float(self.shutdown_tilt_deg.get()),
+                "shutdown_speed_dps": float(self.shutdown_speed_dps.get()),
                 "imu_port": self.imu_port.get(),
                 "imu_baudrate": int(self.imu_baudrate.get()),
                 "imu_use_6axis": bool(self.imu_use_6axis.get()),
@@ -1043,6 +1064,9 @@ class CircleTrackerGUI:
             self.brushless_tilt_direction_sign,
             self.brushless_pan_speed_dps,
             self.brushless_tilt_speed_dps,
+            self.shutdown_pan_deg,
+            self.shutdown_tilt_deg,
+            self.shutdown_speed_dps,
             self.imu_port,
             self.imu_baudrate,
             self.imu_use_6axis,
@@ -1172,6 +1196,11 @@ class CircleTrackerGUI:
         r += 1
         self._grid_entry(tab_basic, r, 0, "水平速度dps", self.brushless_pan_speed_dps, width=8)
         self._grid_entry(tab_basic, r, 2, "俯仰速度dps", self.brushless_tilt_speed_dps, width=8)
+        r += 1
+        self._grid_entry(tab_basic, r, 0, "关机水平角", self.shutdown_pan_deg, width=8)
+        self._grid_entry(tab_basic, r, 2, "关机俯仰角", self.shutdown_tilt_deg, width=8)
+        r += 1
+        self._grid_entry(tab_basic, r, 0, "关机速度dps", self.shutdown_speed_dps, width=8)
         r += 1
         self._grid_entry(tab_basic, r, 0, "控制周期ms", self.control_period_ms, width=8)
         self._grid_entry(tab_basic, r, 2, "点动角度", self.jog_step_deg, width=8)
@@ -1616,6 +1645,36 @@ class CircleTrackerGUI:
                 ]
             )
             self.servo.move_angle(wait=False)
+
+    def _move_to_shutdown_pose(self):
+        if self.servo is None:
+            return
+        s = self._get_settings()
+        pan_target = float(s.get("shutdown_pan_deg", 0.0))
+        tilt_target = float(s.get("shutdown_tilt_deg", 0.0))
+        shutdown_speed = max(1.0, float(s.get("shutdown_speed_dps", 60.0)))
+        pan_backup = getattr(self.servo, "pan_speed_dps", None)
+        tilt_backup = getattr(self.servo, "tilt_speed_dps", None)
+        try:
+            if pan_backup is not None:
+                self.servo.pan_speed_dps = shutdown_speed
+            if tilt_backup is not None:
+                self.servo.tilt_speed_dps = shutdown_speed
+            self.servo.set_angles(
+                [
+                    (self.active_pan_id, pan_target),
+                    (self.active_tilt_id, tilt_target),
+                ]
+            )
+            self.servo.move_angle(wait=False)
+            self.current_pan_angle = pan_target
+            self.current_tilt_angle = tilt_target
+            time.sleep(0.35)
+        finally:
+            if pan_backup is not None:
+                self.servo.pan_speed_dps = pan_backup
+            if tilt_backup is not None:
+                self.servo.tilt_speed_dps = tilt_backup
 
     def _worker_loop(self):
         try:
@@ -2940,12 +2999,11 @@ class CircleTrackerGUI:
         self.stop_event.set()
         self.detect_stop_event.set()
         
-        # 退出 GUI 前强制回正舵机
+        # 退出 GUI 前先走到关机姿态
         if self.servo is not None:
             try:
-                print("[INFO] Exiting GUI. Centering servos before shutdown...")
-                self._center_servos()
-                time.sleep(0.5) # 给舵机一点时间移动到位
+                print("[INFO] Exiting GUI. Moving to shutdown pose before motor off...")
+                self._move_to_shutdown_pose()
             except Exception:
                 pass
                 
