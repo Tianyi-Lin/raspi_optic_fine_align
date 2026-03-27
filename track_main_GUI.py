@@ -332,6 +332,7 @@ class CircleTrackerGUI:
         self.camera_fps = tk.IntVar(value=60)
         self.status_text = tk.StringVar(value="就绪")
         self.status_log_widget = None
+        self.show_debug_panels = tk.BooleanVar(value=False)
 
         self.auto_stabilize = tk.BooleanVar(value=False)
         self.stab_gain_pitch = tk.DoubleVar(value=1.0)
@@ -494,6 +495,7 @@ class CircleTrackerGUI:
             "x_bias": 0,
             "y_bias": 0,
             "camera_fps": 60,
+            "show_debug_panels": False,
             "laser_align_mode": False,
             "laser_threshold": 240,
             "pan_min": -180.0,
@@ -602,6 +604,7 @@ class CircleTrackerGUI:
                 "x_bias": safe_int(self.x_bias, "x_bias"),
                 "y_bias": safe_int(self.y_bias, "y_bias"),
                 "camera_fps": safe_int(self.camera_fps, "camera_fps"),
+                "show_debug_panels": safe_bool(self.show_debug_panels),
                 "laser_align_mode": safe_bool(self.laser_align_mode),
                 "laser_threshold": safe_int(self.laser_threshold, "laser_threshold"),
                 "pan_min": safe_float(self.pan_min, "pan_min"),
@@ -678,6 +681,7 @@ class CircleTrackerGUI:
             "max_radius": 120,
             "x_bias": 0,
             "y_bias": 0,
+            "show_debug_panels": False,
             "pan_min": -180.0,
             "pan_max": 180.0,
             "tilt_min": -90.0,
@@ -766,6 +770,7 @@ class CircleTrackerGUI:
             "x_bias": safe_int(self.x_bias, "x_bias"),
             "y_bias": safe_int(self.y_bias, "y_bias"),
             "camera_fps": safe_int(self.camera_fps, "camera_fps"),
+            "show_debug_panels": safe_bool(self.show_debug_panels, "show_debug_panels"),
             "laser_align_mode": safe_bool(self.laser_align_mode, "laser_align_mode"),
             "laser_threshold": safe_int(self.laser_threshold, "laser_threshold"),
             "pan_min": safe_float(self.pan_min, "pan_min"),
@@ -856,6 +861,7 @@ class CircleTrackerGUI:
             "max_radius": self.max_radius,
             "x_bias": self.x_bias,
             "y_bias": self.y_bias,
+            "show_debug_panels": self.show_debug_panels,
             "pan_min": self.pan_min,
             "pan_max": self.pan_max,
             "tilt_min": self.tilt_min,
@@ -948,6 +954,7 @@ class CircleTrackerGUI:
                 "x_bias": int(self.x_bias.get()),
                 "y_bias": int(self.y_bias.get()),
                 "camera_fps": int(self.camera_fps.get()),
+                "show_debug_panels": bool(self.show_debug_panels.get()),
                 "laser_align_mode": bool(self.laser_align_mode.get()),
                 "laser_threshold": int(self.laser_threshold.get()),
                 "pan_min": float(self.pan_min.get()),
@@ -1042,6 +1049,7 @@ class CircleTrackerGUI:
             self.max_radius,
             self.x_bias,
             self.y_bias,
+            self.show_debug_panels,
             self.camera_fps,
             self.laser_align_mode,
             self.laser_threshold,
@@ -1088,6 +1096,7 @@ class CircleTrackerGUI:
         self.preview_label = ttk.Label(right)
         self.preview_label.pack(fill=tk.BOTH, expand=True)
         ttk.Label(right, textvariable=self.status_text).pack(anchor=tk.W, pady=(6, 0))
+        ttk.Checkbutton(right, text="显示四宫格调试(更耗性能)", variable=self.show_debug_panels).pack(anchor=tk.W, pady=(2, 0))
         self.status_log_widget = scrolledtext.ScrolledText(right, height=6, wrap=tk.WORD)
         self.status_log_widget.pack(fill=tk.X, pady=(4, 0))
         self.status_log_widget.configure(state=tk.DISABLED)
@@ -2083,8 +2092,12 @@ class CircleTrackerGUI:
             )
             
             frame_rgb_disp = cv2.cvtColor(frame_rgb, cv2.COLOR_BGR2RGB)
+            if abs(error_x) <= deadband and abs(error_y) <= deadband and circle_found:
+                cv2.putText(frame_rgb_disp, "ALIGNMENT COMPLETE", (10, h - 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+                if current_distance > 0:
+                    cv2.putText(frame_rgb_disp, f"{current_distance:.3f} m", (10, h - 70), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
             
-            if green_data is not None:
+            if self.show_debug_panels.get() and green_data is not None:
                 blurred_green, blurred_red, offset_x, offset_y, scale = green_data
                 
                 gh, gw = blurred_green.shape[:2]
@@ -2140,21 +2153,11 @@ class CircleTrackerGUI:
                     cv2.putText(full_bin, "Laser Binary (Disabled)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (128, 128, 128), 2)
                     cv2.putText(frame_rgb_disp, "Laser: BLIND ALIGN", (w - 320, h - 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (128, 128, 128), 2)
                 
-                # 检查是否进入死区 (对准完成)
-                if abs(error_x) <= deadband and abs(error_y) <= deadband and circle_found:
-                    cv2.putText(frame_rgb_disp, "ALIGNMENT COMPLETE", (10, h - 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
-                    if current_distance > 0:
-                        cv2.putText(frame_rgb_disp, f"{current_distance:.3f} m", (10, h - 70), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
-                
                 top_row = np.hstack((frame_rgb_disp, full_green))
                 bottom_row = np.hstack((full_red, full_bin))
                 frame_rgb_show = np.vstack((top_row, bottom_row))
             else:
-                full_black = np.zeros_like(frame_rgb_disp)
-                cv2.putText(full_black, "Waiting...", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                top_row = np.hstack((frame_rgb_disp, full_black))
-                bottom_row = np.hstack((full_black, full_black))
-                frame_rgb_show = np.vstack((top_row, bottom_row))
+                frame_rgb_show = frame_rgb_disp
 
             image = Image.fromarray(frame_rgb_show)
             photo = ImageTk.PhotoImage(image=image)
