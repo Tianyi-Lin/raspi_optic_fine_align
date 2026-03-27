@@ -170,6 +170,13 @@ class BrushlessDualServoAdapter:
         self.tilt_motor.motor_run()
 
     def set_angles(self, angles):
+        if self.pan_id == self.tilt_id:
+            ordered = list(angles)
+            if len(ordered) >= 1:
+                self._pending_pan_deg = float(ordered[0][1])
+            if len(ordered) >= 2:
+                self._pending_tilt_deg = float(ordered[1][1])
+            return
         for servo_id, angle in angles:
             sid = int(servo_id)
             if sid == self.pan_id:
@@ -1895,9 +1902,13 @@ class CircleTrackerGUI:
                             voltage = self.servo.read_voltage_mv()
                         else:
                             pos_list = self.servo.read_servos_angle()
-                            pos_map = {sid: pos for sid, pos in pos_list}
-                            pan_pos = pos_map.get(self.active_pan_id)
-                            tilt_pos = pos_map.get(self.active_tilt_id)
+                            if self.active_pan_id == self.active_tilt_id and len(pos_list) >= 2:
+                                pan_pos = pos_list[0][1]
+                                tilt_pos = pos_list[1][1]
+                            else:
+                                pos_map = {sid: pos for sid, pos in pos_list}
+                                pan_pos = pos_map.get(self.active_pan_id)
+                                tilt_pos = pos_map.get(self.active_tilt_id)
                             voltage = None
                         servo_status = (s.get("servo_mode"), pan_pos, tilt_pos, voltage)
                         self.latest_servo_status = servo_status
