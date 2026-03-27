@@ -1107,10 +1107,16 @@ class CircleTrackerGUI:
         tab_basic.columnconfigure(1, weight=1)
         tab_basic.columnconfigure(3, weight=1)
         r = 0
-        self._grid_entry(tab_basic, r, 0, "串口", self.port, width=18)
+        self.port_label = ttk.Label(tab_basic, text="串口")
+        self.port_label.grid(row=r, column=0, sticky="w", padx=(0, 6), pady=(2, 2))
+        self.port_entry = ttk.Entry(tab_basic, textvariable=self.port, width=18)
+        self.port_entry.grid(row=r, column=1, sticky="ew", pady=(2, 2))
         self._grid_entry(tab_basic, r, 2, "移动时间ms", self.move_time_ms, width=8)
         r += 1
-        self._grid_entry(tab_basic, r, 0, "波特率", self.baudrate, width=10)
+        self.baudrate_label = ttk.Label(tab_basic, text="波特率")
+        self.baudrate_label.grid(row=r, column=0, sticky="w", padx=(0, 6), pady=(2, 2))
+        self.baudrate_entry = ttk.Entry(tab_basic, textvariable=self.baudrate, width=10)
+        self.baudrate_entry.grid(row=r, column=1, sticky="ew", pady=(2, 2))
         ttk.Label(tab_basic, text="控制方式").grid(row=r, column=2, sticky="w", padx=(0, 6), pady=(2, 2))
         mode_combo = ttk.Combobox(tab_basic, textvariable=self.servo_mode, values=("调试板", "控制板", "无刷RS485"), state="readonly", width=8)
         mode_combo.grid(row=r, column=3, sticky="w", pady=(2, 2))
@@ -1133,6 +1139,7 @@ class CircleTrackerGUI:
         self._grid_entry(tab_basic, r, 0, "控制周期ms", self.control_period_ms, width=8)
         self._grid_entry(tab_basic, r, 2, "点动角度", self.jog_step_deg, width=8)
         r += 1
+        self._refresh_servo_mode_ui()
         ttk.Checkbutton(tab_basic, text="启用跟踪", variable=self.track_enabled).grid(row=r, column=0, sticky="w", pady=(6, 0))
         ttk.Checkbutton(tab_basic, text="启用水平", variable=self.pan_enabled).grid(row=r, column=1, sticky="w", pady=(6, 0))
         ttk.Checkbutton(tab_basic, text="启用俯仰", variable=self.tilt_enabled).grid(row=r, column=2, sticky="w", pady=(6, 0))
@@ -2633,7 +2640,20 @@ class CircleTrackerGUI:
             self.baudrate.set(115200)
         else:
             self.baudrate.set(115200)
+        self._refresh_servo_mode_ui()
         self._release_servo()
+
+    def _refresh_servo_mode_ui(self):
+        mode = self.servo_mode.get()
+        is_brushless = mode == "无刷RS485"
+        if hasattr(self, "port_label"):
+            self.port_label.configure(text="旧串口(非无刷)" if is_brushless else "串口")
+        if hasattr(self, "port_entry"):
+            self.port_entry.configure(state=(tk.DISABLED if is_brushless else tk.NORMAL))
+        if hasattr(self, "baudrate_label"):
+            self.baudrate_label.configure(text="旧波特率(非无刷)" if is_brushless else "波特率")
+        if hasattr(self, "baudrate_entry"):
+            self.baudrate_entry.configure(state=(tk.DISABLED if is_brushless else tk.NORMAL))
 
     def _update_servo_status_labels(self, servo_status):
         if servo_status is None:
