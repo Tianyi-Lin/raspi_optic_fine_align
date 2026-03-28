@@ -1879,8 +1879,12 @@ class CircleTrackerGUI:
                             delta_filtered = -max_delta
                         self.stab_pan_filtered_deg = self.stab_pan_filtered_deg + delta_filtered
                         stab_pan_raw = self.stab_pan_filtered_deg
-                        stab_tilt = self._quantize_to_servo_step_deg(stab_tilt_raw, axis="tilt")
-                        stab_pan = self._quantize_to_servo_step_deg(stab_pan_raw, axis="pan")
+                        if s.get("servo_mode") == "无刷RS485":
+                            stab_tilt = float(stab_tilt_raw)
+                            stab_pan = float(stab_pan_raw)
+                        else:
+                            stab_tilt = self._quantize_to_servo_step_deg(stab_tilt_raw, axis="tilt")
+                            stab_pan = self._quantize_to_servo_step_deg(stab_pan_raw, axis="pan")
                         self.latest_imu = (
                             float(imu_state.pitch_deg),
                             float(imu_state.yaw_deg),
@@ -2030,6 +2034,14 @@ class CircleTrackerGUI:
                         servo_status = (s.get("servo_mode"), pan_pos, tilt_pos, voltage)
                         self.latest_servo_status = servo_status
                         self.last_servo_status_time = now
+                        if s.get("servo_mode") == "无刷RS485":
+                            try:
+                                if pan_pos is not None:
+                                    self.current_pan_angle = max(pan_min, min(pan_max, float(pan_pos)))
+                                if tilt_pos is not None:
+                                    self.current_tilt_angle = max(tilt_min, min(tilt_max, float(tilt_pos)))
+                            except Exception:
+                                pass
                     except Exception:
                         servo_status = self.latest_servo_status
 
