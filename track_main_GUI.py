@@ -1176,7 +1176,6 @@ class CircleTrackerGUI:
         self.preview_label = ttk.Label(right)
         self.preview_label.pack(fill=tk.BOTH, expand=True)
         ttk.Label(right, textvariable=self.status_text).pack(anchor=tk.W, pady=(6, 0))
-        ttk.Checkbutton(right, text="显示四宫格调试(更耗性能)", variable=self.show_debug_panels).pack(anchor=tk.W, pady=(2, 0))
         self.status_log_widget = scrolledtext.ScrolledText(right, height=6, wrap=tk.WORD)
         self.status_log_widget.pack(fill=tk.X, pady=(4, 0))
         self.status_log_widget.configure(state=tk.DISABLED)
@@ -1476,6 +1475,8 @@ class CircleTrackerGUI:
         rv = self._grid_slider(left_vis, rv, 0, "最大半径", self.max_radius, 1, 300)
         rv2 = 0
         rv2 = self._grid_slider(right_vis, rv2, 0, "模糊核大小", self.ksize, 3, 19)
+        ttk.Checkbutton(right_vis, text="显示四宫格调试(更耗性能)", variable=self.show_debug_panels).grid(row=rv2, column=0, columnspan=2, sticky="w", pady=(2, 6))
+        rv2 += 1
         
         # 视差校正偏置
         ttk.Separator(right_vis, orient=tk.HORIZONTAL).grid(row=rv2, column=0, columnspan=2, sticky="ew", pady=(5, 5))
