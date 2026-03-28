@@ -2098,9 +2098,13 @@ class CircleTrackerGUI:
                 pitch_deadband = max(0.0, float(s.get("stab_pitch_deadband_deg", 0.6)))
                 if abs(pitch_err) < pitch_deadband:
                     pitch_err = 0.0
+                else:
+                    pitch_err = math.copysign(abs(pitch_err) - pitch_deadband, pitch_err)
                 yaw_deadband = max(0.0, float(s.get("stab_yaw_deadband_deg", 0.6)))
                 if abs(yaw_err) < yaw_deadband:
                     yaw_err = 0.0
+                else:
+                    yaw_err = math.copysign(abs(yaw_err) - yaw_deadband, yaw_err)
                 tilt_limit = max(0.0, float(s.get("stab_tilt_limit_deg", 8.0)))
                 pan_limit = max(0.0, float(s.get("stab_pan_limit_deg", 8.0)))
                 stab_tilt_target = pitch_err * float(s.get("stab_gain_pitch", 1.0))
