@@ -245,11 +245,14 @@ class CircleTrackerGUI:
         self.latest_imu = None
         self.worker_thread = None
         self.detect_thread = None
+        self.stab_thread = None
         self.stop_event = threading.Event()
         self.detect_stop_event = threading.Event()
+        self.stab_stop_event = threading.Event()
         self.frame_queue = queue.Queue(maxsize=1)
         self.settings_lock = threading.Lock()
         self.detect_lock = threading.Lock()
+        self.motion_lock = threading.Lock()
         self.settings = {}
         self.worker_error = None
         self.last_exposure = None
@@ -267,6 +270,8 @@ class CircleTrackerGUI:
         self.stab_tilt_residual_deg = 0.0
         self.stab_pan_filtered_deg = 0.0
         self.stab_tilt_filtered_deg = 0.0
+        self.stab_pan_comp_deg = 0.0
+        self.stab_tilt_comp_deg = 0.0
         self.active_pan_id = 1
         self.active_tilt_id = 2
         self.jog_step_deg = tk.DoubleVar(value=1.0)
@@ -324,6 +329,7 @@ class CircleTrackerGUI:
         self.tilt_id = tk.IntVar(value=2)
         self.move_time_ms = tk.IntVar(value=40)
         self.control_period_ms = tk.IntVar(value=50)
+        self.stab_period_ms = tk.IntVar(value=12)
         self.track_enabled = tk.BooleanVar(value=True)
         self.pan_enabled = tk.BooleanVar(value=True)
         self.tilt_enabled = tk.BooleanVar(value=True)
@@ -500,6 +506,7 @@ class CircleTrackerGUI:
             "tilt_id": 2,
             "move_time_ms": 40,
             "control_period_ms": 50,
+            "stab_period_ms": 12,
             "kp_x": 0.0075,
             "ki_x": 0.025,
             "kd_x": 0.000005,
@@ -613,6 +620,7 @@ class CircleTrackerGUI:
                 "tilt_id": safe_int(self.tilt_id, "tilt_id"),
                 "move_time_ms": safe_int(self.move_time_ms, "move_time_ms"),
                 "control_period_ms": safe_int(self.control_period_ms, "control_period_ms"),
+                "stab_period_ms": safe_int(self.stab_period_ms, "stab_period_ms"),
                 "track_enabled": safe_bool(self.track_enabled),
                 "pan_enabled": safe_bool(self.pan_enabled),
                 "tilt_enabled": safe_bool(self.tilt_enabled),
@@ -699,6 +707,7 @@ class CircleTrackerGUI:
             "tilt_id": 2,
             "move_time_ms": 40,
             "control_period_ms": 50,
+            "stab_period_ms": 12,
             "track_enabled": True,
             "pan_enabled": True,
             "tilt_enabled": True,
@@ -795,6 +804,7 @@ class CircleTrackerGUI:
             "tilt_id": safe_int(self.tilt_id, "tilt_id"),
             "move_time_ms": safe_int(self.move_time_ms, "move_time_ms"),
             "control_period_ms": safe_int(self.control_period_ms, "control_period_ms"),
+            "stab_period_ms": safe_int(self.stab_period_ms, "stab_period_ms"),
             "track_enabled": safe_bool(self.track_enabled, "track_enabled"),
             "pan_enabled": safe_bool(self.pan_enabled, "pan_enabled"),
             "tilt_enabled": safe_bool(self.tilt_enabled, "tilt_enabled"),
@@ -895,6 +905,7 @@ class CircleTrackerGUI:
             "tilt_id": self.tilt_id,
             "move_time_ms": self.move_time_ms,
             "control_period_ms": self.control_period_ms,
+            "stab_period_ms": self.stab_period_ms,
             "track_enabled": self.track_enabled,
             "pan_enabled": self.pan_enabled,
             "tilt_enabled": self.tilt_enabled,
@@ -995,6 +1006,7 @@ class CircleTrackerGUI:
                 "tilt_id": int(self.tilt_id.get()),
                 "move_time_ms": int(self.move_time_ms.get()),
                 "control_period_ms": int(self.control_period_ms.get()),
+                "stab_period_ms": int(self.stab_period_ms.get()),
                 "track_enabled": bool(self.track_enabled.get()),
                 "pan_enabled": bool(self.pan_enabled.get()),
                 "tilt_enabled": bool(self.tilt_enabled.get()),
@@ -1099,6 +1111,7 @@ class CircleTrackerGUI:
             self.tilt_id,
             self.move_time_ms,
             self.control_period_ms,
+            self.stab_period_ms,
             self.track_enabled,
             self.pan_enabled,
             self.tilt_enabled,
@@ -1219,7 +1232,9 @@ class CircleTrackerGUI:
         self._grid_entry(tab_basic, r, 0, "关机速度dps", self.shutdown_speed_dps, width=8)
         r += 1
         self._grid_entry(tab_basic, r, 0, "控制周期ms", self.control_period_ms, width=8)
-        self._grid_entry(tab_basic, r, 2, "点动角度", self.jog_step_deg, width=8)
+        self._grid_entry(tab_basic, r, 2, "稳定周期ms", self.stab_period_ms, width=8)
+        r += 1
+        self._grid_entry(tab_basic, r, 0, "点动角度", self.jog_step_deg, width=8)
         r += 1
         self._refresh_servo_mode_ui()
         ttk.Checkbutton(tab_basic, text="启用跟踪", variable=self.track_enabled).grid(row=r, column=0, sticky="w", pady=(6, 0))
@@ -1602,6 +1617,7 @@ class CircleTrackerGUI:
         try:
             self.stop_event.clear()
             self.detect_stop_event.clear()
+            self.stab_stop_event.clear()
             self.worker_error = None
             self._update_settings_from_vars()
             self._ensure_camera()
@@ -1611,6 +1627,8 @@ class CircleTrackerGUI:
             self.worker_thread.start()
             self.detect_thread = threading.Thread(target=self._detect_loop, daemon=True)
             self.detect_thread.start()
+            self.stab_thread = threading.Thread(target=self._stabilization_loop, daemon=True)
+            self.stab_thread.start()
             self.after_id = self.root.after(30, self._ui_loop)
             self.status_text.set("检测中（未跟踪）")
         except Exception as exc:
@@ -1839,7 +1857,7 @@ class CircleTrackerGUI:
 
                 do_track = self.tracking_active
                 do_stab = bool(s.get("auto_stabilize", False))
-                if do_track or do_stab:
+                if do_track:
                     try:
                         # 每次循环都同步角度范围到舵机驱动层（确保GUI修改立即生效）
                         self._ensure_servo()
@@ -1851,69 +1869,9 @@ class CircleTrackerGUI:
                 stab_pan = 0.0
                 stab_tilt = 0.0
                 if do_stab:
-                    try:
-                        self._ensure_imu()
-                        imu_state = self.imu.get_state() if self.imu is not None else None
-                    except Exception as exc:
-                        self.worker_error = f"IMU read failed: {exc}"
-                        self.stop_event.set()
-                        break
-                    if imu_state is not None and imu_state.last_update > 0:
-                        pitch_err = self._angle_diff_deg(imu_state.pitch_deg, self.imu_zero_pitch)
-                        yaw_err = self._angle_diff_deg(imu_state.yaw_deg, self.imu_zero_yaw)
-                        if bool(s.get("stab_invert_y", False)):
-                            pitch_err = -pitch_err
-                        if bool(s.get("stab_invert_x", False)):
-                            yaw_err = -yaw_err
-                        pitch_deadband = max(0.0, float(s.get("stab_pitch_deadband_deg", 0.6)))
-                        if abs(pitch_err) < pitch_deadband:
-                            pitch_err = 0.0
-                        tilt_limit = max(0.0, float(s.get("stab_tilt_limit_deg", 8.0)))
-                        stab_tilt_target = pitch_err * float(s.get("stab_gain_pitch", 1.0))
-                        stab_tilt_target = max(-tilt_limit, min(tilt_limit, stab_tilt_target))
-                        tilt_alpha = float(s.get("stab_tilt_alpha", 0.35))
-                        tilt_alpha = max(0.0, min(1.0, tilt_alpha))
-                        tilt_filtered_target = self.stab_tilt_filtered_deg + tilt_alpha * (stab_tilt_target - self.stab_tilt_filtered_deg)
-                        tilt_rate_limit = max(0.0, float(s.get("stab_tilt_rate_limit_deg_per_s", 120.0)))
-                        tilt_max_delta = tilt_rate_limit * dt
-                        tilt_delta_filtered = tilt_filtered_target - self.stab_tilt_filtered_deg
-                        if tilt_delta_filtered > tilt_max_delta:
-                            tilt_delta_filtered = tilt_max_delta
-                        elif tilt_delta_filtered < -tilt_max_delta:
-                            tilt_delta_filtered = -tilt_max_delta
-                        self.stab_tilt_filtered_deg = self.stab_tilt_filtered_deg + tilt_delta_filtered
-                        stab_tilt_raw = self.stab_tilt_filtered_deg
-                        yaw_deadband = max(0.0, float(s.get("stab_yaw_deadband_deg", 0.6)))
-                        if abs(yaw_err) < yaw_deadband:
-                            yaw_err = 0.0
-                        pan_limit = max(0.0, float(s.get("stab_pan_limit_deg", 8.0)))
-                        stab_pan_target = -yaw_err * float(s.get("stab_gain_yaw", 1.0))
-                        stab_pan_target = max(-pan_limit, min(pan_limit, stab_pan_target))
-                        alpha = float(s.get("stab_pan_alpha", 0.35))
-                        alpha = max(0.0, min(1.0, alpha))
-                        filtered_target = self.stab_pan_filtered_deg + alpha * (stab_pan_target - self.stab_pan_filtered_deg)
-                        rate_limit = max(0.0, float(s.get("stab_pan_rate_limit_deg_per_s", 120.0)))
-                        max_delta = rate_limit * dt
-                        delta_filtered = filtered_target - self.stab_pan_filtered_deg
-                        if delta_filtered > max_delta:
-                            delta_filtered = max_delta
-                        elif delta_filtered < -max_delta:
-                            delta_filtered = -max_delta
-                        self.stab_pan_filtered_deg = self.stab_pan_filtered_deg + delta_filtered
-                        stab_pan_raw = self.stab_pan_filtered_deg
-                        if s.get("servo_mode") == "无刷RS485":
-                            stab_tilt = float(stab_tilt_raw)
-                            stab_pan = float(stab_pan_raw)
-                        else:
-                            stab_tilt = self._quantize_to_servo_step_deg(stab_tilt_raw, axis="tilt")
-                            stab_pan = self._quantize_to_servo_step_deg(stab_pan_raw, axis="pan")
-                        self.latest_imu = (
-                            float(imu_state.pitch_deg),
-                            float(imu_state.yaw_deg),
-                            float(time.time() - imu_state.last_update),
-                            float(pitch_err),
-                            float(yaw_err),
-                        )
+                    with self.motion_lock:
+                        stab_pan = float(self.stab_pan_comp_deg)
+                        stab_tilt = float(self.stab_tilt_comp_deg)
                 # 使用GUI配置和硬件物理边界的交集作为最终限制
                 # max(硬件最小, GUI最小) 和 min(硬件最大, GUI最大)
                 pan_min = max(float(s.get("hw_pan_min", -90.0)), float(s.get("pan_min", -90.0)))
@@ -1969,7 +1927,7 @@ class CircleTrackerGUI:
                 tilt_at_max = self.current_tilt_angle >= tilt_max
                 bound_reason_msgs = []
 
-                if (do_track and (s["pan_enabled"] or s["tilt_enabled"])) or do_stab:
+                if do_track and (s["pan_enabled"] or s["tilt_enabled"]):
                     out_pan = self.current_pan_angle
                     out_tilt = self.current_tilt_angle
                     if s["pan_enabled"]:
@@ -2098,6 +2056,122 @@ class CircleTrackerGUI:
             import traceback
             print(f"[ERROR] worker loop exception: {exc}")
             traceback.print_exc()
+            self.worker_error = str(exc)
+            self.stop_event.set()
+
+    def _stabilization_loop(self):
+        last_time = time.time()
+        try:
+            while not self.stab_stop_event.is_set():
+                if not self.running:
+                    time.sleep(0.01)
+                    last_time = time.time()
+                    continue
+                s = self._get_settings()
+                period_ms = max(2, int(s.get("stab_period_ms", 12)))
+                loop_start = time.time()
+                dt = max(loop_start - last_time, 1e-4)
+                last_time = loop_start
+                if not bool(s.get("auto_stabilize", False)):
+                    with self.motion_lock:
+                        self.stab_pan_comp_deg = 0.0
+                        self.stab_tilt_comp_deg = 0.0
+                    time.sleep(period_ms / 1000.0)
+                    continue
+                try:
+                    self._ensure_servo()
+                    self._ensure_imu()
+                    imu_state = self.imu.get_state() if self.imu is not None else None
+                except Exception as exc:
+                    self.worker_error = f"IMU stabilize failed: {exc}"
+                    self.stop_event.set()
+                    break
+                if imu_state is None or imu_state.last_update <= 0:
+                    time.sleep(period_ms / 1000.0)
+                    continue
+                pitch_err = self._angle_diff_deg(imu_state.pitch_deg, self.imu_zero_pitch)
+                yaw_err = self._angle_diff_deg(imu_state.yaw_deg, self.imu_zero_yaw)
+                if bool(s.get("stab_invert_y", False)):
+                    pitch_err = -pitch_err
+                if bool(s.get("stab_invert_x", False)):
+                    yaw_err = -yaw_err
+                pitch_deadband = max(0.0, float(s.get("stab_pitch_deadband_deg", 0.6)))
+                if abs(pitch_err) < pitch_deadband:
+                    pitch_err = 0.0
+                yaw_deadband = max(0.0, float(s.get("stab_yaw_deadband_deg", 0.6)))
+                if abs(yaw_err) < yaw_deadband:
+                    yaw_err = 0.0
+                tilt_limit = max(0.0, float(s.get("stab_tilt_limit_deg", 8.0)))
+                pan_limit = max(0.0, float(s.get("stab_pan_limit_deg", 8.0)))
+                stab_tilt_target = pitch_err * float(s.get("stab_gain_pitch", 1.0))
+                stab_tilt_target = max(-tilt_limit, min(tilt_limit, stab_tilt_target))
+                stab_pan_target = -yaw_err * float(s.get("stab_gain_yaw", 1.0))
+                stab_pan_target = max(-pan_limit, min(pan_limit, stab_pan_target))
+                tilt_alpha = max(0.0, min(1.0, float(s.get("stab_tilt_alpha", 0.35))))
+                pan_alpha = max(0.0, min(1.0, float(s.get("stab_pan_alpha", 0.35))))
+                tilt_filtered_target = self.stab_tilt_filtered_deg + tilt_alpha * (stab_tilt_target - self.stab_tilt_filtered_deg)
+                pan_filtered_target = self.stab_pan_filtered_deg + pan_alpha * (stab_pan_target - self.stab_pan_filtered_deg)
+                tilt_rate_limit = max(0.0, float(s.get("stab_tilt_rate_limit_deg_per_s", 120.0)))
+                pan_rate_limit = max(0.0, float(s.get("stab_pan_rate_limit_deg_per_s", 120.0)))
+                tilt_delta_filtered = tilt_filtered_target - self.stab_tilt_filtered_deg
+                pan_delta_filtered = pan_filtered_target - self.stab_pan_filtered_deg
+                tilt_max_delta = tilt_rate_limit * dt
+                pan_max_delta = pan_rate_limit * dt
+                if tilt_delta_filtered > tilt_max_delta:
+                    tilt_delta_filtered = tilt_max_delta
+                elif tilt_delta_filtered < -tilt_max_delta:
+                    tilt_delta_filtered = -tilt_max_delta
+                if pan_delta_filtered > pan_max_delta:
+                    pan_delta_filtered = pan_max_delta
+                elif pan_delta_filtered < -pan_max_delta:
+                    pan_delta_filtered = -pan_max_delta
+                self.stab_tilt_filtered_deg = self.stab_tilt_filtered_deg + tilt_delta_filtered
+                self.stab_pan_filtered_deg = self.stab_pan_filtered_deg + pan_delta_filtered
+                stab_tilt_raw = float(self.stab_tilt_filtered_deg)
+                stab_pan_raw = float(self.stab_pan_filtered_deg)
+                if s.get("servo_mode") == "无刷RS485":
+                    stab_tilt = stab_tilt_raw
+                    stab_pan = stab_pan_raw
+                else:
+                    stab_tilt = self._quantize_to_servo_step_deg(stab_tilt_raw, axis="tilt")
+                    stab_pan = self._quantize_to_servo_step_deg(stab_pan_raw, axis="pan")
+                with self.motion_lock:
+                    self.stab_pan_comp_deg = float(stab_pan)
+                    self.stab_tilt_comp_deg = float(stab_tilt)
+                    self.latest_imu = (
+                        float(imu_state.pitch_deg),
+                        float(imu_state.yaw_deg),
+                        float(time.time() - imu_state.last_update),
+                        float(pitch_err),
+                        float(yaw_err),
+                    )
+                if not self.tracking_active and self.servo is not None:
+                    pan_min = max(float(s.get("hw_pan_min", -90.0)), float(s.get("pan_min", -90.0)))
+                    pan_max = min(float(s.get("hw_pan_max", 90.0)), float(s.get("pan_max", 90.0)))
+                    tilt_min = max(float(s.get("hw_tilt_min", -90.0)), float(s.get("tilt_min", -90.0)))
+                    tilt_max = min(float(s.get("hw_tilt_max", 90.0)), float(s.get("tilt_max", 90.0)))
+                    with self.motion_lock:
+                        out_pan = float(self.current_pan_angle)
+                        out_tilt = float(self.current_tilt_angle)
+                    if s.get("pan_enabled", True):
+                        out_pan = max(pan_min, min(pan_max, out_pan + float(stab_pan)))
+                    if s.get("tilt_enabled", True):
+                        out_tilt = max(tilt_min, min(tilt_max, out_tilt + float(stab_tilt)))
+                    try:
+                        self.servo.set_angles(
+                            [
+                                (self.active_pan_id, out_pan),
+                                (self.active_tilt_id, out_tilt),
+                            ]
+                        )
+                        self.servo.move_angle(wait=False)
+                    except Exception:
+                        pass
+                elapsed_ms = int((time.time() - loop_start) * 1000)
+                sleep_ms = max(0, period_ms - elapsed_ms)
+                if sleep_ms > 0:
+                    time.sleep(sleep_ms / 1000.0)
+        except Exception as exc:
             self.worker_error = str(exc)
             self.stop_event.set()
 
@@ -3024,6 +3098,7 @@ class CircleTrackerGUI:
         self._save_settings()
         self.stop_event.set()
         self.detect_stop_event.set()
+        self.stab_stop_event.set()
         
         # 退出 GUI 前先走到关机姿态
         if self.servo is not None:
@@ -3045,6 +3120,9 @@ class CircleTrackerGUI:
         if self.detect_thread is not None:
             self.detect_thread.join(timeout=2.0)
             self.detect_thread = None
+        if self.stab_thread is not None:
+            self.stab_thread.join(timeout=2.0)
+            self.stab_thread = None
         if self.picam2 is not None:
             try:
                 self.picam2.stop()
