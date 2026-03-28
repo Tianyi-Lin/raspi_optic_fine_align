@@ -3118,15 +3118,16 @@ class CircleTrackerGUI:
             except Exception:
                 pass
             self.after_id = None
+        if self.stab_thread is not None:
+            self.stab_thread.join(timeout=2.0)
+            self.stab_thread = None
+        self._close_imu()
         if self.worker_thread is not None:
             self.worker_thread.join(timeout=2.0)
             self.worker_thread = None
         if self.detect_thread is not None:
             self.detect_thread.join(timeout=2.0)
             self.detect_thread = None
-        if self.stab_thread is not None:
-            self.stab_thread.join(timeout=2.0)
-            self.stab_thread = None
         if self.picam2 is not None:
             try:
                 self.picam2.stop()
@@ -3149,7 +3150,6 @@ class CircleTrackerGUI:
             except Exception:
                 pass
             self.laser_ranger = None
-        self._close_imu()
         self.root.destroy()
 
     def _jog(self, delta_pan, delta_tilt):
