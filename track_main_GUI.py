@@ -340,7 +340,6 @@ class CircleTrackerGUI:
         self.ki_y = tk.DoubleVar(value=0.02)
         self.kd_y = tk.DoubleVar(value=0.000005)
         self.error_deadband = tk.DoubleVar(value=3.0)
-        self.max_delta_deg_per_sec = tk.DoubleVar(value=120.0)
         self.exposure_value = tk.IntVar(value=10000) # 微秒 us
         self.analogue_gain = tk.DoubleVar(value=1.0)
         self.ae_enable = tk.BooleanVar(value=True)
@@ -514,7 +513,6 @@ class CircleTrackerGUI:
             "ki_y": 0.02,
             "kd_y": 0.000005,
             "deadband": 3.0,
-            "max_delta_deg_per_sec": 120.0,
             "exposure": 0.0,
             "gain": 8.0,
             "ksize": 5,
@@ -631,7 +629,6 @@ class CircleTrackerGUI:
                 "ki_y": safe_float(self.ki_y, "ki_y"),
                 "kd_y": safe_float(self.kd_y, "kd_y"),
                 "deadband": safe_float(self.error_deadband, "deadband"),
-                "max_delta_deg_per_sec": safe_float(self.max_delta_deg_per_sec, "max_delta_deg_per_sec"),
                 "exposure": safe_float(self.exposure_value, "exposure"),
                 "gain": safe_float(self.analogue_gain, "gain"),
                 "ae_enable": safe_bool(self.ae_enable),
@@ -718,7 +715,6 @@ class CircleTrackerGUI:
             "ki_y": 0.025,
             "kd_y": 0.000005,
             "deadband": 3.0,
-            "max_delta_deg_per_sec": 120.0,
             "exposure": 10000,
             "gain": 1.0,
             "ae_enable": True,
@@ -815,7 +811,6 @@ class CircleTrackerGUI:
             "ki_y": safe_float(self.ki_y, "ki_y"),
             "kd_y": safe_float(self.kd_y, "kd_y"),
             "deadband": safe_float(self.error_deadband, "deadband"),
-            "max_delta_deg_per_sec": safe_float(self.max_delta_deg_per_sec, "max_delta_deg_per_sec"),
             "exposure": safe_int(self.exposure_value, "exposure"),
             "gain": safe_float(self.analogue_gain, "gain"),
             "ae_enable": safe_bool(self.ae_enable, "ae_enable"),
@@ -916,7 +911,6 @@ class CircleTrackerGUI:
             "ki_y": self.ki_y,
             "kd_y": self.kd_y,
             "deadband": self.error_deadband,
-            "max_delta_deg_per_sec": self.max_delta_deg_per_sec,
             "exposure": self.exposure_value,
             "gain": self.analogue_gain,
             "ae_enable": self.ae_enable,
@@ -1017,7 +1011,6 @@ class CircleTrackerGUI:
                 "ki_y": float(self.ki_y.get()),
                 "kd_y": float(self.kd_y.get()),
                 "deadband": float(self.error_deadband.get()),
-                "max_delta_deg_per_sec": float(self.max_delta_deg_per_sec.get()),
                 "exposure": float(self.exposure_value.get()),
                 "gain": float(self.analogue_gain.get()),
                 "ae_enable": bool(self.ae_enable.get()),
@@ -1122,7 +1115,6 @@ class CircleTrackerGUI:
             self.ki_y,
             self.kd_y,
             self.error_deadband,
-            self.max_delta_deg_per_sec,
             self.exposure_value,
             self.analogue_gain,
             self.ae_enable,
@@ -1354,8 +1346,6 @@ class CircleTrackerGUI:
         r2 = 0
         r2 = self._grid_slider(common, r2, 0, "死区(像素)", self.error_deadband, 0.0, 30.0)
         ttk.Label(common, text="误差小于此值时不响应，避免抖动", font=("", 8), foreground="gray").grid(row=r2-1, column=2, sticky="w", padx=(6, 0))
-        r2 = self._grid_slider(common, r2, 0, "最大角速度(度/秒)", self.max_delta_deg_per_sec, 1.0, 500.0)
-        ttk.Label(common, text="限制舵机转动速度，10-60度/秒较平滑", font=("", 8), foreground="gray").grid(row=r2-1, column=2, sticky="w", padx=(6, 0))
 
         # 卡尔曼滤波参数配置
         kalman_frame = ttk.LabelFrame(tab_pid, text="卡尔曼滤波 (Kalman Filter)", padding=8)
@@ -1853,8 +1843,6 @@ class CircleTrackerGUI:
                     self.pid_x.reset()
                     self.pid_y.reset()
 
-                max_step = float(s["max_delta_deg_per_sec"]) * dt
-
                 do_track = self.tracking_active
                 do_stab = bool(s.get("auto_stabilize", False))
                 if do_track:
@@ -1903,9 +1891,7 @@ class CircleTrackerGUI:
                     if pan_at_max_before and delta_x > 0:
                         delta_x = 0
                         self.pid_x.i_term = 0.0
-                    desired_pan = self.current_pan_angle + delta_x
-                    step_pan = max(-max_step, min(max_step, desired_pan - self.current_pan_angle))
-                    self.current_pan_angle = max(pan_min, min(pan_max, self.current_pan_angle + step_pan))
+                    self.current_pan_angle = max(pan_min, min(pan_max, self.current_pan_angle + delta_x))
 
                 if do_track and s["tilt_enabled"]:
                     delta_y = self.pid_y.update(error_y, dt=dt)
@@ -1916,9 +1902,7 @@ class CircleTrackerGUI:
                     if tilt_at_max_before and delta_y > 0:
                         delta_y = 0
                         self.pid_y.i_term = 0.0
-                    desired_tilt = self.current_tilt_angle + delta_y
-                    step_tilt = max(-max_step, min(max_step, desired_tilt - self.current_tilt_angle))
-                    self.current_tilt_angle = max(tilt_min, min(tilt_max, self.current_tilt_angle + step_tilt))
+                    self.current_tilt_angle = max(tilt_min, min(tilt_max, self.current_tilt_angle + delta_y))
 
                 # 更新后的跟踪输出边界（不含IMU补偿）
                 pan_at_min = self.current_pan_angle <= pan_min
