@@ -363,6 +363,8 @@ class CircleTrackerGUI:
         self.stab_pan_limit_deg = tk.DoubleVar(value=8.0)
         self.stab_pan_alpha = tk.DoubleVar(value=0.35)
         self.stab_pan_rate_limit_deg_per_s = tk.DoubleVar(value=120.0)
+        self.stab_invert_x = tk.BooleanVar(value=False)
+        self.stab_invert_y = tk.BooleanVar(value=False)
         
         # 激光指示对准配置
         self.laser_align_mode = tk.BooleanVar(value=False) # False:盲对准, True:指示对准
@@ -542,6 +544,8 @@ class CircleTrackerGUI:
             "stab_pan_limit_deg": 8.0,
             "stab_pan_alpha": 0.35,
             "stab_pan_rate_limit_deg_per_s": 120.0,
+            "stab_invert_x": False,
+            "stab_invert_y": False,
             "imu_ax_offset_g": 0.0,
             "imu_ay_offset_g": 0.0,
             "imu_az_offset_g": 0.0,
@@ -653,6 +657,8 @@ class CircleTrackerGUI:
                 "stab_pan_limit_deg": safe_float(self.stab_pan_limit_deg, "stab_pan_limit_deg"),
                 "stab_pan_alpha": safe_float(self.stab_pan_alpha, "stab_pan_alpha"),
                 "stab_pan_rate_limit_deg_per_s": safe_float(self.stab_pan_rate_limit_deg_per_s, "stab_pan_rate_limit_deg_per_s"),
+                "stab_invert_x": safe_bool(self.stab_invert_x),
+                "stab_invert_y": safe_bool(self.stab_invert_y),
         }
 
     def _get_settings(self):
@@ -734,6 +740,8 @@ class CircleTrackerGUI:
             "stab_pan_limit_deg": 8.0,
             "stab_pan_alpha": 0.35,
             "stab_pan_rate_limit_deg_per_s": 120.0,
+            "stab_invert_x": False,
+            "stab_invert_y": False,
         }
         def safe_int(var, key):
             try:
@@ -831,6 +839,8 @@ class CircleTrackerGUI:
             "stab_pan_limit_deg": safe_float(self.stab_pan_limit_deg, "stab_pan_limit_deg"),
             "stab_pan_alpha": safe_float(self.stab_pan_alpha, "stab_pan_alpha"),
             "stab_pan_rate_limit_deg_per_s": safe_float(self.stab_pan_rate_limit_deg_per_s, "stab_pan_rate_limit_deg_per_s"),
+            "stab_invert_x": safe_bool(self.stab_invert_x, "stab_invert_x"),
+            "stab_invert_y": safe_bool(self.stab_invert_y, "stab_invert_y"),
             "hw_pan_min": safe_float(self.hw_pan_min, "hw_pan_min"),
             "hw_pan_max": safe_float(self.hw_pan_max, "hw_pan_max"),
             "hw_tilt_min": safe_float(self.hw_tilt_min, "hw_tilt_min"),
@@ -926,6 +936,8 @@ class CircleTrackerGUI:
             "stab_pan_limit_deg": self.stab_pan_limit_deg,
             "stab_pan_alpha": self.stab_pan_alpha,
             "stab_pan_rate_limit_deg_per_s": self.stab_pan_rate_limit_deg_per_s,
+            "stab_invert_x": self.stab_invert_x,
+            "stab_invert_y": self.stab_invert_y,
         }
         for key, var in var_map.items():
             if key not in data:
@@ -1027,6 +1039,8 @@ class CircleTrackerGUI:
                 "stab_pan_limit_deg": float(self.stab_pan_limit_deg.get()),
                 "stab_pan_alpha": float(self.stab_pan_alpha.get()),
                 "stab_pan_rate_limit_deg_per_s": float(self.stab_pan_rate_limit_deg_per_s.get()),
+                "stab_invert_x": bool(self.stab_invert_x.get()),
+                "stab_invert_y": bool(self.stab_invert_y.get()),
             }
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
@@ -1129,6 +1143,8 @@ class CircleTrackerGUI:
             self.stab_pan_limit_deg,
             self.stab_pan_alpha,
             self.stab_pan_rate_limit_deg_per_s,
+            self.stab_invert_x,
+            self.stab_invert_y,
             self.hw_pan_min,
             self.hw_pan_max,
             self.hw_tilt_min,
@@ -1258,6 +1274,8 @@ class CircleTrackerGUI:
         ttk.Button(imu_frame, text="应用波特率", command=self._apply_imu_baudrate).grid(row=1, column=3, sticky="ew")
         ttk.Checkbutton(imu_frame, text="6轴算法", variable=self.imu_use_6axis).grid(row=2, column=0, sticky="w")
         ttk.Button(imu_frame, text="应用算法", command=self._apply_imu_algorithm_mode).grid(row=2, column=1, sticky="ew", padx=(5, 0))
+        ttk.Checkbutton(imu_frame, text="X反向(Yaw/水平)", variable=self.stab_invert_x).grid(row=2, column=2, sticky="w")
+        ttk.Checkbutton(imu_frame, text="Y反向(Pitch/俯仰)", variable=self.stab_invert_y).grid(row=2, column=3, sticky="w")
         ttk.Label(imu_frame, text="Pitch增益:").grid(row=3, column=0, sticky="e")
         ttk.Entry(imu_frame, textvariable=self.stab_gain_pitch, width=10).grid(row=3, column=1, sticky="w", padx=5)
         ttk.Label(imu_frame, text="Yaw增益:").grid(row=3, column=2, sticky="e")
@@ -1843,6 +1861,10 @@ class CircleTrackerGUI:
                     if imu_state is not None and imu_state.last_update > 0:
                         pitch_err = self._angle_diff_deg(imu_state.pitch_deg, self.imu_zero_pitch)
                         yaw_err = self._angle_diff_deg(imu_state.yaw_deg, self.imu_zero_yaw)
+                        if bool(s.get("stab_invert_y", False)):
+                            pitch_err = -pitch_err
+                        if bool(s.get("stab_invert_x", False)):
+                            yaw_err = -yaw_err
                         pitch_deadband = max(0.0, float(s.get("stab_pitch_deadband_deg", 0.6)))
                         if abs(pitch_err) < pitch_deadband:
                             pitch_err = 0.0
