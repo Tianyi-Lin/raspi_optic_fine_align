@@ -327,7 +327,6 @@ class CircleTrackerGUI:
         self.imu_az_reference_g = tk.DoubleVar(value=1.0)
         self.pan_id = tk.IntVar(value=1)
         self.tilt_id = tk.IntVar(value=2)
-        self.move_time_ms = tk.IntVar(value=40)
         self.control_period_ms = tk.IntVar(value=50)
         self.stab_period_ms = tk.IntVar(value=12)
         self.track_enabled = tk.BooleanVar(value=True)
@@ -503,7 +502,6 @@ class CircleTrackerGUI:
             "imu_output_hz": 50,
             "pan_id": 1,
             "tilt_id": 2,
-            "move_time_ms": 40,
             "control_period_ms": 50,
             "stab_period_ms": 12,
             "kp_x": 0.0075,
@@ -616,7 +614,6 @@ class CircleTrackerGUI:
                 "imu_az_reference_g": safe_float(self.imu_az_reference_g, "imu_az_reference_g"),
                 "pan_id": safe_int(self.pan_id, "pan_id"),
                 "tilt_id": safe_int(self.tilt_id, "tilt_id"),
-                "move_time_ms": safe_int(self.move_time_ms, "move_time_ms"),
                 "control_period_ms": safe_int(self.control_period_ms, "control_period_ms"),
                 "stab_period_ms": safe_int(self.stab_period_ms, "stab_period_ms"),
                 "track_enabled": safe_bool(self.track_enabled),
@@ -702,7 +699,6 @@ class CircleTrackerGUI:
             "imu_az_reference_g": 1.0,
             "pan_id": 1,
             "tilt_id": 2,
-            "move_time_ms": 40,
             "control_period_ms": 50,
             "stab_period_ms": 12,
             "track_enabled": True,
@@ -798,7 +794,6 @@ class CircleTrackerGUI:
             "imu_az_reference_g": safe_float(self.imu_az_reference_g, "imu_az_reference_g"),
             "pan_id": safe_int(self.pan_id, "pan_id"),
             "tilt_id": safe_int(self.tilt_id, "tilt_id"),
-            "move_time_ms": safe_int(self.move_time_ms, "move_time_ms"),
             "control_period_ms": safe_int(self.control_period_ms, "control_period_ms"),
             "stab_period_ms": safe_int(self.stab_period_ms, "stab_period_ms"),
             "track_enabled": safe_bool(self.track_enabled, "track_enabled"),
@@ -898,7 +893,6 @@ class CircleTrackerGUI:
             "imu_az_reference_g": self.imu_az_reference_g,
             "pan_id": self.pan_id,
             "tilt_id": self.tilt_id,
-            "move_time_ms": self.move_time_ms,
             "control_period_ms": self.control_period_ms,
             "stab_period_ms": self.stab_period_ms,
             "track_enabled": self.track_enabled,
@@ -998,7 +992,6 @@ class CircleTrackerGUI:
                 "imu_az_reference_g": float(self.imu_az_reference_g.get()),
                 "pan_id": int(self.pan_id.get()),
                 "tilt_id": int(self.tilt_id.get()),
-                "move_time_ms": int(self.move_time_ms.get()),
                 "control_period_ms": int(self.control_period_ms.get()),
                 "stab_period_ms": int(self.stab_period_ms.get()),
                 "track_enabled": bool(self.track_enabled.get()),
@@ -1102,7 +1095,6 @@ class CircleTrackerGUI:
             self.imu_az_reference_g,
             self.pan_id,
             self.tilt_id,
-            self.move_time_ms,
             self.control_period_ms,
             self.stab_period_ms,
             self.track_enabled,
@@ -1195,9 +1187,8 @@ class CircleTrackerGUI:
         tab_basic.columnconfigure(1, weight=1)
         tab_basic.columnconfigure(3, weight=1)
         r = 0
-        self._grid_entry(tab_basic, r, 0, "移动时间ms", self.move_time_ms, width=8)
-        ttk.Label(tab_basic, text="控制方式").grid(row=r, column=2, sticky="w", padx=(0, 6), pady=(2, 2))
-        ttk.Label(tab_basic, text="无刷RS485").grid(row=r, column=3, sticky="w", pady=(2, 2))
+        ttk.Label(tab_basic, text="控制方式").grid(row=r, column=0, sticky="w", padx=(0, 6), pady=(2, 2))
+        ttk.Label(tab_basic, text="无刷RS485").grid(row=r, column=1, sticky="w", pady=(2, 2))
         r += 1
         self._grid_entry(tab_basic, r, 0, "水平ID", self.pan_id, width=8)
         self._grid_entry(tab_basic, r, 2, "俯仰ID", self.tilt_id, width=8)
@@ -1722,8 +1713,6 @@ class CircleTrackerGUI:
                     continue
 
                 s = self._get_settings()
-                if self.servo is not None:
-                    self.servo.moving_time = max(0, int(s["move_time_ms"]))
                 self._sync_camera_controls(s["ae_enable"], s["exposure"], s["gain"], s["camera_fps"])
 
                 frame_rgb = self.picam2.capture_array()
@@ -2902,7 +2891,7 @@ class CircleTrackerGUI:
             self.servo = BoardServoAdapter(
                 driver=driver,
                 servo_ids=[self.active_pan_id, self.active_tilt_id],
-                moving_time=settings["move_time_ms"],
+                moving_time=40,
             )
             self.servo.set_angles([(self.active_pan_id, 0.0), (self.active_tilt_id, 0.0)])
             self.servo.move_angle(wait=False)
@@ -2921,7 +2910,7 @@ class CircleTrackerGUI:
             baudrate=settings["baudrate"],
             servo_num=2,
             servo_ids=[self.active_pan_id, self.active_tilt_id],
-            moving_time=settings["move_time_ms"],
+            moving_time=40,
         )
         self.servo.set_angles([(self.active_pan_id, 0.0), (self.active_tilt_id, 0.0)])
         self.servo.move_angle(wait=False)
