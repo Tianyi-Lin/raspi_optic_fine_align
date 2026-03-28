@@ -2056,14 +2056,6 @@ class CircleTrackerGUI:
                         servo_status = (s.get("servo_mode"), pan_pos, tilt_pos, voltage)
                         self.latest_servo_status = servo_status
                         self.last_servo_status_time = now
-                        if s.get("servo_mode") == "无刷RS485":
-                            try:
-                                if pan_pos is not None:
-                                    self.current_pan_angle = max(pan_min, min(pan_max, float(pan_pos)))
-                                if tilt_pos is not None:
-                                    self.current_tilt_angle = max(tilt_min, min(tilt_max, float(tilt_pos)))
-                            except Exception:
-                                pass
                     except Exception:
                         servo_status = self.latest_servo_status
 
