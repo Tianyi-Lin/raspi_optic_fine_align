@@ -249,6 +249,7 @@ class CircleTrackerGUI:
         self.stop_event = threading.Event()
         self.detect_stop_event = threading.Event()
         self.stab_stop_event = threading.Event()
+        self.camera_reconfigure_event = threading.Event()
         self.frame_queue = queue.Queue(maxsize=1)
         self.settings_lock = threading.Lock()
         self.detect_lock = threading.Lock()
@@ -420,6 +421,10 @@ class CircleTrackerGUI:
         self._autosave_suppress = True
 
         self._load_settings()
+        self.camera_target_size = (
+            max(160, int(self.camera_raw_width.get())),
+            max(120, int(self.camera_raw_height.get())),
+        )
         self._build_ui()
         self.status_text.trace_add("write", self._on_status_text_changed)
         self.servo_mode.trace_add("write", self._on_servo_mode_change)
@@ -1542,6 +1547,8 @@ class CircleTrackerGUI:
         rc += 1
         self._grid_entry(cam, rc, 0, "采集高度", self.camera_raw_height, width=10)
         rc += 1
+        ttk.Button(cam, text="应用分辨率", command=self._apply_camera_resolution).grid(row=rc, column=0, sticky="w", pady=(2, 8))
+        rc += 1
         rc = self._grid_slider(cam, rc, 0, "相机FPS", self.camera_fps, 10, 120)
         rotate_frame = ttk.Frame(cam)
         rotate_frame.grid(row=rc, column=0, sticky="ew", pady=(2, 6))
@@ -1672,6 +1679,7 @@ class CircleTrackerGUI:
             self.stop_event.clear()
             self.detect_stop_event.clear()
             self.stab_stop_event.clear()
+            self.camera_reconfigure_event.clear()
             self.worker_error = None
             self._update_settings_from_vars()
             self._ensure_camera()
@@ -1785,15 +1793,17 @@ class CircleTrackerGUI:
                     continue
 
                 s = self._get_settings()
-                desired_w = max(160, int(s.get("camera_raw_width", 640)))
-                desired_h = max(120, int(s.get("camera_raw_height", 640)))
-                if getattr(self, "camera_raw_size", None) != (desired_w, desired_h):
+                if self.camera_reconfigure_event.is_set():
+                    self.camera_reconfigure_event.clear()
                     try:
                         if self.picam2 is not None:
                             self.picam2.stop()
                             self.picam2.close()
                             self.picam2 = None
                         self._ensure_camera()
+                        if getattr(self, "camera_raw_size", None) is not None:
+                            rw, rh = self.camera_raw_size
+                            self.status_text.set(f"相机分辨率已应用: {rw}x{rh}")
                     except Exception as exc:
                         self.worker_error = str(exc)
                         self.stop_event.set()
@@ -2566,8 +2576,9 @@ class CircleTrackerGUI:
         self.picam2 = Picamera2()
         self.picam2.start_preview(Preview.NULL)
         framerate = settings.get("camera_fps", 60)
-        raw_w = max(160, int(settings.get("camera_raw_width", 640)))
-        raw_h = max(120, int(settings.get("camera_raw_height", 640)))
+        target_size = getattr(self, "camera_target_size", (640, 640))
+        raw_w = max(160, int(target_size[0]))
+        raw_h = max(120, int(target_size[1]))
         frame_duration = int(1000000 / framerate)
         config = self.picam2.create_video_configuration(
             controls={"FrameDurationLimits": (frame_duration, frame_duration)}
@@ -2675,6 +2686,17 @@ class CircleTrackerGUI:
         self.imu_status_pitch_delta.set("+0.00")
         self.imu_status_yaw_delta.set("+0.00")
         self.status_text.set("IMU已置零(平均)")
+
+    def _apply_camera_resolution(self):
+        try:
+            w = max(160, int(self.camera_raw_width.get()))
+            h = max(120, int(self.camera_raw_height.get()))
+            self.camera_target_size = (w, h)
+            self.camera_reconfigure_event.set()
+            self.status_text.set(f"相机分辨率待应用: {w}x{h}")
+        except Exception as exc:
+            self.worker_error = str(exc)
+            self.status_text.set(f"分辨率配置失败: {exc}")
 
     def _apply_imu_output_rate(self):
         try:
