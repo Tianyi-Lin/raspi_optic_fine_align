@@ -1138,7 +1138,7 @@ class CircleTrackerGUI:
         self._preview_box_size = None
         self._autosize_window()
         try:
-            self.preview_label.bind("<Configure>", self._on_preview_label_configure)
+            self.preview_frame.bind("<Configure>", self._on_preview_frame_configure)
         except Exception:
             pass
         self.status_text.trace_add("write", self._on_status_text_changed)
@@ -1149,61 +1149,66 @@ class CircleTrackerGUI:
         self._update_settings_from_vars()
         self._attach_autosave()
         self._autosave_suppress = False
-        
-        # 1. 强制配置激光测距模块为查询模式 (Passive / Inquire)
-        configure_laser_module(
-            port="/dev/ttyAMA3", 
-            baudrate=115200, 
-            module_id=0,
-            output_mode="inquire",
-            range_mode="medium",
-            interface_mode="uart",
-            uart_baudrate=115200
-        )
-        
-        # 释放激光配置串口后，硬延时 1 秒，等待系统资源完全释放和稳定
-        print("[INFO] Laser configured. Waiting 1.0s before initializing servos...")
-        time.sleep(1.0)
-        
-        # 2. 尝试提前初始化舵机并在GUI显示前立即回正
-        try:
-            # 确保使用正确的配置初始化舵机
-            fallback_mode = "无刷RS485"
-            try:
-                settings_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tracker_settings.txt")
-                if os.path.exists(settings_path):
-                    with open(settings_path, "r", encoding="utf-8") as f:
-                        _ = json.load(f)
-            except Exception:
-                pass
-            
-            # 在启动前设置模式，确保 _ensure_servo 使用正确的类
-            self.servo_mode.set(fallback_mode)
-            self._ensure_servo()
-
-            try:
-                self._ensure_imu()
-                self._zero_imu()
-            except Exception as exc:
-                print(f"[WARNING] IMU init/zero failed before GUI start: {exc}")
-        except Exception as exc:
-            import traceback
-            traceback.print_exc()
-            print(f"[WARNING] Servo init failed before GUI start: {exc}")
-            
-        # 舵机回正指令发送后，硬延时 1 秒，等待舵机机械运动到位及总线电平恢复
-        print("[INFO] Servos centered. Waiting 1.0s before attaching laser monitor...")
-        time.sleep(1.0)
-            
-        # 3. 初始化激光测距模块 (被动查询模式)
-        # 注意：这里不再调用 start() 开启后台死循环，而是由主循环按需调用 query_once()
-        try:
-            self.laser_ranger = LaserRangerQueryMonitor(port="/dev/ttyAMA3", baudrate=115200, module_id=0, history_len=10)
-        except Exception as exc:
-            print(f"[WARNING] Laser Ranger init failed: {exc}")
-        
-        self._release_local_hardware_handles()
+        self.laser_ranger = None
         self.root.after(10, self._start_runtime)
+        self._startup_hardware_prep_async()
+
+    def _startup_hardware_prep_async(self):
+        def _worker():
+            try:
+                try:
+                    self.root.after(0, lambda: self.status_text.set("初始化外设中..."))
+                except Exception:
+                    pass
+                try:
+                    configure_laser_module(
+                        port="/dev/ttyAMA3",
+                        baudrate=115200,
+                        module_id=0,
+                        output_mode="inquire",
+                        range_mode="medium",
+                        interface_mode="uart",
+                        uart_baudrate=115200,
+                    )
+                except Exception as exc:
+                    print(f"[WARNING] Laser configure failed: {exc}")
+                time.sleep(1.0)
+                try:
+                    fallback_mode = "无刷RS485"
+                    try:
+                        self.root.after(0, lambda: self.servo_mode.set(fallback_mode))
+                    except Exception:
+                        self.servo_mode.set(fallback_mode)
+                    self._ensure_servo()
+                    try:
+                        self._ensure_imu()
+                        self._zero_imu()
+                    except Exception as exc:
+                        print(f"[WARNING] IMU init/zero failed before start: {exc}")
+                except Exception as exc:
+                    import traceback
+
+                    traceback.print_exc()
+                    print(f"[WARNING] Servo init failed before start: {exc}")
+                time.sleep(1.0)
+                try:
+                    self.laser_ranger = LaserRangerQueryMonitor(
+                        port="/dev/ttyAMA3", baudrate=115200, module_id=0, history_len=10
+                    )
+                except Exception as exc:
+                    print(f"[WARNING] Laser Ranger init failed: {exc}")
+            finally:
+                try:
+                    self._release_local_hardware_handles()
+                except Exception:
+                    pass
+                try:
+                    self.root.after(0, lambda: self.status_text.set(self.status_text.get()))
+                except Exception:
+                    pass
+
+        t = threading.Thread(target=_worker, daemon=True)
+        t.start()
 
     def _autosize_window(self):
         try:
@@ -1224,7 +1229,7 @@ class CircleTrackerGUI:
         except Exception:
             pass
 
-    def _on_preview_label_configure(self, event):
+    def _on_preview_frame_configure(self, event):
         try:
             w = int(event.width)
             h = int(event.height)
@@ -2159,7 +2164,13 @@ class CircleTrackerGUI:
         right = ttk.Frame(main)
         right.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
-        self.preview_label = ttk.Label(right)
+        self.preview_frame = ttk.Frame(right)
+        self.preview_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        try:
+            self.preview_frame.pack_propagate(False)
+        except Exception:
+            pass
+        self.preview_label = ttk.Label(self.preview_frame)
         self.preview_label.pack(fill=tk.BOTH, expand=True)
         ttk.Label(right, textvariable=self.status_text).pack(anchor=tk.W, pady=(6, 0))
         ttk.Checkbutton(
@@ -4500,8 +4511,8 @@ class CircleTrackerGUI:
         box = getattr(self, "_preview_box_size", None)
         if box is None:
             try:
-                box_w = int(self.preview_label.winfo_width())
-                box_h = int(self.preview_label.winfo_height())
+                box_w = int(self.preview_frame.winfo_width())
+                box_h = int(self.preview_frame.winfo_height())
             except Exception:
                 return img_rgb
         else:
