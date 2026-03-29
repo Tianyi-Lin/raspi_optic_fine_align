@@ -325,6 +325,7 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
     next_servo_retry_ts = 0.0
     last_ts = time.time()
     last_push = 0.0
+    last_imu_push = 0.0
     last_auto_stabilize = False
     while not stop_event.is_set():
         try:
@@ -566,7 +567,7 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
         imu_age = -1.0
         auto_stabilize = bool(settings.get("auto_stabilize", False))
         had_imu_sample = False
-        if auto_stabilize and imu is not None:
+        if imu is not None:
             try:
                 imu_state = imu.get_state()
             except Exception as exc:
@@ -580,6 +581,15 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
                 imu_pitch = float(imu_state.pitch_deg)
                 imu_yaw = float(imu_state.yaw_deg)
                 imu_age = max(0.0, now - float(imu_state.last_update))
+        if now - last_imu_push >= 0.10:
+            try:
+                status_queue.put_nowait(("imu_pitch", imu_pitch))
+                status_queue.put_nowait(("imu_yaw", imu_yaw))
+                status_queue.put_nowait(("imu_age", imu_age))
+            except Exception:
+                pass
+            last_imu_push = now
+        if auto_stabilize and had_imu_sample:
                 if not last_auto_stabilize:
                     imu_zero_pitch = imu_pitch
                     imu_zero_yaw = imu_yaw
@@ -613,16 +623,30 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
                     yaw_err = math.copysign(abs(yaw_err) - yaw_deadband, yaw_err)
                 tilt_limit = max(0.0, float(settings.get("stab_tilt_limit_deg", 8.0)))
                 pan_limit = max(0.0, float(settings.get("stab_pan_limit_deg", 8.0)))
-                stab_tilt_target = max(-tilt_limit, min(tilt_limit, pitch_err * float(settings.get("stab_gain_pitch", 1.0))))
+                stab_tilt_target = max(-tilt_limit, min(tilt_limit, -pitch_err * float(settings.get("stab_gain_pitch", 1.0))))
                 stab_pan_target = max(-pan_limit, min(pan_limit, -yaw_err * float(settings.get("stab_gain_yaw", 1.0))))
                 tilt_alpha = max(0.0, min(1.0, float(settings.get("stab_tilt_alpha", 0.35))))
                 pan_alpha = max(0.0, min(1.0, float(settings.get("stab_pan_alpha", 0.35))))
-                stab_tilt_filtered = stab_tilt_filtered + tilt_alpha * (stab_tilt_target - stab_tilt_filtered)
-                stab_pan_filtered = stab_pan_filtered + pan_alpha * (stab_pan_target - stab_pan_filtered)
+                tilt_filtered_target = stab_tilt_filtered + tilt_alpha * (stab_tilt_target - stab_tilt_filtered)
+                pan_filtered_target = stab_pan_filtered + pan_alpha * (stab_pan_target - stab_pan_filtered)
                 tilt_rate = max(0.0, float(settings.get("stab_tilt_rate_limit_deg_per_s", 120.0)))
                 pan_rate = max(0.0, float(settings.get("stab_pan_rate_limit_deg_per_s", 120.0)))
-                stab_tilt = max(-tilt_rate * dt, min(tilt_rate * dt, stab_tilt_filtered))
-                stab_pan = max(-pan_rate * dt, min(pan_rate * dt, stab_pan_filtered))
+                tilt_delta_filtered = tilt_filtered_target - stab_tilt_filtered
+                pan_delta_filtered = pan_filtered_target - stab_pan_filtered
+                tilt_max_delta = tilt_rate * dt
+                pan_max_delta = pan_rate * dt
+                if tilt_delta_filtered > tilt_max_delta:
+                    tilt_delta_filtered = tilt_max_delta
+                elif tilt_delta_filtered < -tilt_max_delta:
+                    tilt_delta_filtered = -tilt_max_delta
+                if pan_delta_filtered > pan_max_delta:
+                    pan_delta_filtered = pan_max_delta
+                elif pan_delta_filtered < -pan_max_delta:
+                    pan_delta_filtered = -pan_max_delta
+                stab_tilt_filtered = stab_tilt_filtered + tilt_delta_filtered
+                stab_pan_filtered = stab_pan_filtered + pan_delta_filtered
+                stab_tilt = float(stab_tilt_filtered)
+                stab_pan = float(stab_pan_filtered)
         last_auto_stabilize = bool(auto_stabilize and had_imu_sample)
         if servo is not None:
             pan_min = float(settings.get("pan_min", -360.0))
@@ -630,14 +654,18 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
             tilt_min = float(settings.get("tilt_min", -360.0))
             tilt_max = float(settings.get("tilt_max", 360.0))
             if bool(settings.get("pan_enabled", True)):
-                current_pan = max(pan_min, min(pan_max, current_pan + delta_x + stab_pan))
+                current_pan = max(pan_min, min(pan_max, current_pan + delta_x))
             if bool(settings.get("tilt_enabled", True)):
-                current_tilt = max(tilt_min, min(tilt_max, current_tilt + delta_y + stab_tilt))
+                current_tilt = max(tilt_min, min(tilt_max, current_tilt + delta_y))
+            out_pan = float(current_pan + stab_pan)
+            out_tilt = float(current_tilt + stab_tilt)
+            out_pan = max(pan_min, min(pan_max, out_pan))
+            out_tilt = max(tilt_min, min(tilt_max, out_tilt))
             try:
                 servo.set_angles(
                     [
-                        (int(settings.get("pan_id", 1)), current_pan),
-                        (int(settings.get("tilt_id", 2)), current_tilt),
+                        (int(settings.get("pan_id", 1)), out_pan),
+                        (int(settings.get("tilt_id", 2)), out_tilt),
                     ]
                 )
                 servo.move_angle(wait=False)
@@ -656,11 +684,12 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
             try:
                 status_queue.put_nowait(("control_hz", hz))
                 status_queue.put_nowait(("det_age", age))
-                status_queue.put_nowait(("control_pan", current_pan))
-                status_queue.put_nowait(("control_tilt", current_tilt))
-                status_queue.put_nowait(("imu_pitch", imu_pitch))
-                status_queue.put_nowait(("imu_yaw", imu_yaw))
-                status_queue.put_nowait(("imu_age", imu_age))
+                if servo is not None:
+                    status_queue.put_nowait(("control_pan", float(out_pan)))
+                    status_queue.put_nowait(("control_tilt", float(out_tilt)))
+                else:
+                    status_queue.put_nowait(("control_pan", current_pan))
+                    status_queue.put_nowait(("control_tilt", current_tilt))
             except Exception:
                 pass
             last_push = now
@@ -3186,7 +3215,7 @@ class CircleTrackerGUI:
                     yaw_err = math.copysign(abs(yaw_err) - yaw_deadband, yaw_err)
                 tilt_limit = max(0.0, float(s.get("stab_tilt_limit_deg", 8.0)))
                 pan_limit = max(0.0, float(s.get("stab_pan_limit_deg", 8.0)))
-                stab_tilt_target = pitch_err * float(s.get("stab_gain_pitch", 1.0))
+                stab_tilt_target = -pitch_err * float(s.get("stab_gain_pitch", 1.0))
                 stab_tilt_target = max(-tilt_limit, min(tilt_limit, stab_tilt_target))
                 stab_pan_target = -yaw_err * float(s.get("stab_gain_yaw", 1.0))
                 stab_pan_target = max(-pan_limit, min(pan_limit, stab_pan_target))
