@@ -262,6 +262,7 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
     settings = {
         "core_control": "3",
         "control_period_ms": 20,
+        "control_debug_timing": False,
         "camera_raw_width": 640,
         "camera_raw_height": 640,
         "sensor_bit_depth": 10,
@@ -330,7 +331,9 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
     last_push = 0.0
     last_imu_push = 0.0
     last_auto_stabilize = False
+    last_timing_push = 0.0
     while not stop_event.is_set():
+        loop_start = time.time()
         try:
             while True:
                 cmd = cmd_queue.get_nowait()
@@ -378,6 +381,7 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
                         current_tilt = float(settings.get("shutdown_tilt_deg", 0.0))
         except Exception:
             pass
+        t_cmd_end = time.time()
         try:
             while True:
                 msg = settings_queue.get_nowait()
@@ -387,6 +391,7 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
                         _set_current_process_affinity(msg.get("core_control"))
         except Exception:
             pass
+        t_settings_end = time.time()
         loop_now = time.time()
         desired_key = (
             settings.get("brushless_pan_dev"),
@@ -467,6 +472,7 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
                 servo.tilt_speed_dps = float(settings.get("brushless_tilt_speed_dps", 120.0))
             except Exception:
                 pass
+        t_servo_end = time.time()
         imu_desired_key = (
             settings.get("imu_port"),
             settings.get("imu_baudrate"),
@@ -532,12 +538,14 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
                     status_queue.put_nowait(("control_err", f"IMU init: {exc}"))
                 except Exception:
                     pass
+        t_imu_init_end = time.time()
         now = time.time()
         dt = max(1e-3, (now - last_ts))
         hz = 1.0 / dt
         last_ts = now
         valid = latest_det[5] > 0.5
-        age = (now - float(latest_det[4])) if valid else -1.0
+        det_update_age = now - float(latest_det[4])
+        age = det_update_age if valid else -1.0
         tracking_enabled = bool(settings.get("track_enabled", True)) and bool(settings.get("tracking_active", False))
         pid_x.set_gains(float(settings.get("kp_x", 0.0075)), float(settings.get("ki_x", 0.025)), float(settings.get("kd_x", 0.000005)))
         pid_y.set_gains(float(settings.get("kp_y", 0.01)), float(settings.get("ki_y", 0.02)), float(settings.get("kd_y", 0.000005)))
@@ -592,6 +600,7 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
             except Exception:
                 pass
             last_imu_push = now
+        t_imu_read_end = time.time()
         if auto_stabilize and had_imu_sample:
                 if not last_auto_stabilize:
                     imu_zero_pitch = imu_pitch
@@ -683,10 +692,13 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
                     pass
                 servo = None
                 servo_key = None
+        t_servo_write_end = time.time()
         if now - last_push >= 0.25:
             try:
                 status_queue.put_nowait(("control_hz", hz))
                 status_queue.put_nowait(("det_age", age))
+                status_queue.put_nowait(("det_valid", 1.0 if valid else 0.0))
+                status_queue.put_nowait(("det_update_age", float(det_update_age)))
                 if servo is not None:
                     status_queue.put_nowait(("control_pan", float(out_pan)))
                     status_queue.put_nowait(("control_tilt", float(out_tilt)))
@@ -697,7 +709,32 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
                 pass
             last_push = now
         period_ms = max(1, int(settings.get("control_period_ms", 20)))
-        time.sleep(period_ms / 1000.0)
+        work_ms = (t_servo_write_end - loop_start) * 1000.0
+        sleep_ms = max(0.0, float(period_ms) - work_ms)
+        debug_timing = bool(settings.get("control_debug_timing", False))
+        if debug_timing and (now - last_timing_push) >= 0.8:
+            try:
+                status_queue.put_nowait(
+                    (
+                        "ctrl_timing",
+                        {
+                            "period_ms": float(period_ms),
+                            "cmd_ms": (t_cmd_end - loop_start) * 1000.0,
+                            "settings_ms": (t_settings_end - t_cmd_end) * 1000.0,
+                            "servo_ms": (t_servo_end - t_settings_end) * 1000.0,
+                            "imu_init_ms": (t_imu_init_end - t_servo_end) * 1000.0,
+                            "imu_read_ms": (t_imu_read_end - t_imu_init_end) * 1000.0,
+                            "servo_write_ms": (t_servo_write_end - t_imu_read_end) * 1000.0,
+                            "work_ms": work_ms,
+                            "sleep_ms": sleep_ms,
+                        },
+                    )
+                )
+            except Exception:
+                pass
+            last_timing_push = now
+        if sleep_ms > 0:
+            time.sleep(sleep_ms / 1000.0)
     try:
         if servo is not None:
             servo.cleanup()
@@ -934,6 +971,9 @@ class CircleTrackerGUI:
         self.mp_control_hz = 0.0
         self.mp_vision_hz = 0.0
         self.mp_det_age = -1.0
+        self.mp_det_update_age = -1.0
+        self.mp_det_valid = 0.0
+        self.mp_ctrl_timing = ""
         self.mp_pan = 0.0
         self.mp_tilt = 0.0
         self.mp_preview_jpg = None
@@ -1022,6 +1062,7 @@ class CircleTrackerGUI:
         self.tilt_id = tk.IntVar(value=2)
         self.control_period_ms = tk.IntVar(value=50)
         self.stab_period_ms = tk.IntVar(value=12)
+        self.control_debug_timing = tk.BooleanVar(value=True)
         self.multiprocess_mode = tk.BooleanVar(value=True)
         self.core_affinity_enabled = tk.BooleanVar(value=False)
         self.core_ui = tk.IntVar(value=0)
@@ -1357,6 +1398,7 @@ class CircleTrackerGUI:
             "tilt_id": 2,
             "control_period_ms": 50,
             "stab_period_ms": 12,
+            "control_debug_timing": True,
             "multiprocess_mode": True,
             "core_affinity_enabled": False,
             "core_ui": 0,
@@ -1491,6 +1533,7 @@ class CircleTrackerGUI:
                 "tilt_id": safe_int(self.tilt_id, "tilt_id"),
                 "control_period_ms": safe_int(self.control_period_ms, "control_period_ms"),
                 "stab_period_ms": safe_int(self.stab_period_ms, "stab_period_ms"),
+                "control_debug_timing": safe_bool(self.control_debug_timing),
                 "multiprocess_mode": safe_bool(self.multiprocess_mode),
                 "core_affinity_enabled": safe_bool(self.core_affinity_enabled),
                 "core_ui": safe_int(self.core_ui, "core_ui"),
@@ -1712,6 +1755,7 @@ class CircleTrackerGUI:
             "tilt_id": safe_int(self.tilt_id, "tilt_id"),
             "control_period_ms": safe_int(self.control_period_ms, "control_period_ms"),
             "stab_period_ms": safe_int(self.stab_period_ms, "stab_period_ms"),
+            "control_debug_timing": safe_bool(self.control_debug_timing, "control_debug_timing"),
             "multiprocess_mode": safe_bool(self.multiprocess_mode, "multiprocess_mode"),
             "core_affinity_enabled": safe_bool(self.core_affinity_enabled, "core_affinity_enabled"),
             "core_ui": safe_int(self.core_ui, "core_ui"),
@@ -1831,6 +1875,7 @@ class CircleTrackerGUI:
             "tilt_id": self.tilt_id,
             "control_period_ms": self.control_period_ms,
             "stab_period_ms": self.stab_period_ms,
+            "control_debug_timing": self.control_debug_timing,
             "multiprocess_mode": self.multiprocess_mode,
             "core_affinity_enabled": self.core_affinity_enabled,
             "core_ui": self.core_ui,
@@ -1951,6 +1996,7 @@ class CircleTrackerGUI:
                 "tilt_id": int(self.tilt_id.get()),
                 "control_period_ms": int(self.control_period_ms.get()),
                 "stab_period_ms": int(self.stab_period_ms.get()),
+                "control_debug_timing": bool(self.control_debug_timing.get()),
                 "multiprocess_mode": bool(self.multiprocess_mode.get()),
                 "core_affinity_enabled": bool(self.core_affinity_enabled.get()),
                 "core_ui": int(self.core_ui.get()),
@@ -2076,6 +2122,7 @@ class CircleTrackerGUI:
             self.tilt_id,
             self.control_period_ms,
             self.stab_period_ms,
+            self.control_debug_timing,
             self.multiprocess_mode,
             self.core_affinity_enabled,
             self.core_ui,
@@ -2235,6 +2282,8 @@ class CircleTrackerGUI:
         r += 1
         self._grid_entry(tab_basic, r, 0, "控制周期ms", self.control_period_ms, width=8)
         self._grid_entry(tab_basic, r, 2, "稳定周期ms", self.stab_period_ms, width=8)
+        r += 1
+        ttk.Checkbutton(tab_basic, text="控制调试输出", variable=self.control_debug_timing).grid(row=r, column=0, sticky="w", pady=(2, 2))
         r += 1
         ttk.Checkbutton(tab_basic, text="绑定CPU核心", variable=self.core_affinity_enabled).grid(row=r, column=0, sticky="w", pady=(2, 2))
         self._grid_entry(tab_basic, r, 2, "UI核", self.core_ui, width=6)
@@ -3528,6 +3577,24 @@ class CircleTrackerGUI:
                         self.mp_control_hz = float(val)
                     elif key == "det_age":
                         self.mp_det_age = float(val)
+                    elif key == "det_valid":
+                        self.mp_det_valid = float(val)
+                    elif key == "det_update_age":
+                        self.mp_det_update_age = float(val)
+                    elif key == "ctrl_timing":
+                        try:
+                            self.mp_ctrl_timing = (
+                                f"cmd={float(val.get('cmd_ms', 0.0)):.1f}ms "
+                                f"set={float(val.get('settings_ms', 0.0)):.1f}ms "
+                                f"servo={float(val.get('servo_ms', 0.0)):.1f}ms "
+                                f"imuI={float(val.get('imu_init_ms', 0.0)):.1f}ms "
+                                f"imuR={float(val.get('imu_read_ms', 0.0)):.1f}ms "
+                                f"write={float(val.get('servo_write_ms', 0.0)):.1f}ms "
+                                f"work={float(val.get('work_ms', 0.0)):.1f}ms "
+                                f"sleep={float(val.get('sleep_ms', 0.0)):.1f}ms"
+                            )
+                        except Exception:
+                            self.mp_ctrl_timing = ""
                     elif key == "vision_err":
                         self.mp_last_error = f"视觉进程错误: {val}"
                     elif key == "control_err":
@@ -3587,7 +3654,7 @@ class CircleTrackerGUI:
             except Exception:
                 period_ms = 0
             self.status_text.set(
-                f"多进程运行中 跟踪={tracking_flag} V={int(vision_alive)} C={int(control_alive)} 周期ms={period_ms} 视觉Hz={self.mp_vision_hz:.1f} 控制Hz={self.mp_control_hz:.1f} 检测Age={self.mp_det_age:.3f}s 水平={self.mp_pan:.2f} 俯仰={self.mp_tilt:.2f}"
+                f"多进程运行中 跟踪={tracking_flag} V={int(vision_alive)} C={int(control_alive)} 周期ms={period_ms} 视觉Hz={self.mp_vision_hz:.1f} 控制Hz={self.mp_control_hz:.1f} DetOK={int(self.mp_det_valid>0.5)} Age={self.mp_det_age:.3f}s UpdAge={self.mp_det_update_age:.3f}s 水平={self.mp_pan:.2f} 俯仰={self.mp_tilt:.2f} {self.mp_ctrl_timing}"
             )
             if self.mp_last_error:
                 self.status_text.set(self.status_text.get() + f" 错误={self.mp_last_error}")
@@ -4524,16 +4591,14 @@ class CircleTrackerGUI:
             return img_rgb
         if iw == box_w and ih == box_h:
             return img_rgb
-        scale = min(box_w / float(iw), box_h / float(ih))
+        scale = max(box_w / float(iw), box_h / float(ih))
         new_w = max(1, int(round(iw * scale)))
         new_h = max(1, int(round(ih * scale)))
         interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
         resized = cv2.resize(img_rgb, (new_w, new_h), interpolation=interp)
-        out = np.zeros((box_h, box_w, 3), dtype=resized.dtype)
-        x0 = max(0, (box_w - new_w) // 2)
-        y0 = max(0, (box_h - new_h) // 2)
-        out[y0:y0 + new_h, x0:x0 + new_w] = resized
-        return out
+        x0 = max(0, (new_w - box_w) // 2)
+        y0 = max(0, (new_h - box_h) // 2)
+        return resized[y0 : y0 + box_h, x0 : x0 + box_w]
 
     def on_close(self):
         if self._is_closing:
