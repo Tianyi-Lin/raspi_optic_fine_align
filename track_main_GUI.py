@@ -906,36 +906,33 @@ class BrushlessDualServoAdapter:
                 self._pending_tilt_deg = float(angle)
 
     def move_angle(self, wait=True):
-        if self.pan_id == self.tilt_id:
-            self.pan_motor.move_to_deg(self._pending_pan_deg, max_speed_dps=self.pan_speed_dps)
+        if bool(getattr(self, "parallel_write", False)):
+            errors = []
+
+            def _move_pan():
+                try:
+                    self.pan_motor.move_to_deg(self._pending_pan_deg, max_speed_dps=self.pan_speed_dps)
+                except Exception as exc:
+                    errors.append(RuntimeError(f"pan move failed: {exc}"))
+
+            def _move_tilt():
+                try:
+                    self.tilt_motor.move_to_deg(self._pending_tilt_deg, max_speed_dps=self.tilt_speed_dps)
+                except Exception as exc:
+                    errors.append(RuntimeError(f"tilt move failed: {exc}"))
+
+            t1 = threading.Thread(target=_move_pan, daemon=True)
+            t2 = threading.Thread(target=_move_tilt, daemon=True)
+            t1.start()
+            t2.start()
+            t1.join()
+            t2.join()
+            if errors:
+                raise errors[0]
         else:
-            if bool(getattr(self, "parallel_write", False)):
-                errors = []
-
-                def _move_pan():
-                    try:
-                        self.pan_motor.move_to_deg(self._pending_pan_deg, max_speed_dps=self.pan_speed_dps)
-                    except Exception as exc:
-                        errors.append(RuntimeError(f"pan move failed: {exc}"))
-
-                def _move_tilt():
-                    try:
-                        self.tilt_motor.move_to_deg(self._pending_tilt_deg, max_speed_dps=self.tilt_speed_dps)
-                    except Exception as exc:
-                        errors.append(RuntimeError(f"tilt move failed: {exc}"))
-
-                t1 = threading.Thread(target=_move_pan, daemon=True)
-                t2 = threading.Thread(target=_move_tilt, daemon=True)
-                t1.start()
-                t2.start()
-                t1.join()
-                t2.join()
-                if errors:
-                    raise errors[0]
-            else:
-                self.pan_motor.move_to_deg(self._pending_pan_deg, max_speed_dps=self.pan_speed_dps)
-                time.sleep(0.005)
-                self.tilt_motor.move_to_deg(self._pending_tilt_deg, max_speed_dps=self.tilt_speed_dps)
+            self.pan_motor.move_to_deg(self._pending_pan_deg, max_speed_dps=self.pan_speed_dps)
+            time.sleep(0.005)
+            self.tilt_motor.move_to_deg(self._pending_tilt_deg, max_speed_dps=self.tilt_speed_dps)
         if wait:
             time.sleep(0.01)
 
