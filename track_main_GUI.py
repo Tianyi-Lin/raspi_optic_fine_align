@@ -334,6 +334,9 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
                         if len(cmd) >= 3:
                             current_pan += float(cmd[1])
                             current_tilt += float(cmd[2])
+                    elif cmd[0] == "shutdown_pose":
+                        current_pan = float(settings.get("shutdown_pan_deg", 0.0))
+                        current_tilt = float(settings.get("shutdown_tilt_deg", 0.0))
         except Exception:
             pass
         try:
@@ -3232,6 +3235,10 @@ class CircleTrackerGUI:
                 self.preview_label.image = None
             if self.mp_latest_detection is not None and self.mp_latest_detection[5] > 0.5:
                 self.mp_det_age = max(0.0, time.time() - float(self.mp_latest_detection[4]))
+            self.servo_status_mode.set("无刷RS485(MP)")
+            self.servo_status_pan.set(f"{self.mp_pan:.1f}")
+            self.servo_status_tilt.set(f"{self.mp_tilt:.1f}")
+            self.servo_status_voltage.set("-")
             self.status_text.set(
                 f"多进程重构中 V={int(vision_alive)} C={int(control_alive)} 视觉Hz={self.mp_vision_hz:.1f} 控制Hz={self.mp_control_hz:.1f} 检测Age={self.mp_det_age:.3f}s 水平={self.mp_pan:.2f} 俯仰={self.mp_tilt:.2f}"
             )
@@ -4141,6 +4148,12 @@ class CircleTrackerGUI:
     def on_close(self):
         self.tracking_active = False
         self._save_settings()
+        if self.multiprocess_mode.get() and self.mp_control_cmd_queue is not None:
+            try:
+                self.mp_control_cmd_queue.put_nowait(("shutdown_pose",))
+                time.sleep(0.35)
+            except Exception:
+                pass
         self.stop_event.set()
         self.detect_stop_event.set()
         self.stab_stop_event.set()
