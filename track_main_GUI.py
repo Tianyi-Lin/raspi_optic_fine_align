@@ -821,6 +821,7 @@ class CircleTrackerGUI:
         self.mp_pan = 0.0
         self.mp_tilt = 0.0
         self.mp_preview_jpg = None
+        self.mp_last_error = ""
         self.stop_event = threading.Event()
         self.detect_stop_event = threading.Event()
         self.stab_stop_event = threading.Event()
@@ -2491,11 +2492,14 @@ class CircleTrackerGUI:
             return
         try:
             self.multiprocess_mode.set(True)
+            self.aggressive_perf_mode.set(False)
+            self.multiprocess_preview.set(True)
             self.stop_event.clear()
             self.detect_stop_event.clear()
             self.stab_stop_event.clear()
             self.camera_reconfigure_event.clear()
             self.worker_error = None
+            self.mp_last_error = ""
             self._update_settings_from_vars()
             self._bind_current_thread_core(self.core_ui.get())
             self._start_multiprocess_runtime()
@@ -3155,7 +3159,7 @@ class CircleTrackerGUI:
             self.after_id = self.root.after(100, self._ui_loop)
             return
         self._update_settings_from_vars()
-        if self.worker_error is not None:
+        if self.worker_error is not None and not self.multiprocess_mode.get():
             self.status_text.set(f"工作线程错误: {self.worker_error}")
             self.after_id = self.root.after(200, self._ui_loop)
             return
@@ -3164,9 +3168,9 @@ class CircleTrackerGUI:
             vision_alive = bool(self.mp_vision_proc is not None and self.mp_vision_proc.is_alive())
             control_alive = bool(self.mp_control_proc is not None and self.mp_control_proc.is_alive())
             if not vision_alive:
-                self.worker_error = "视觉进程已退出"
+                self.mp_last_error = "视觉进程已退出"
             if not control_alive:
-                self.worker_error = "控制进程已退出"
+                self.mp_last_error = "控制进程已退出"
             try:
                 while True:
                     key, val = self.mp_status_queue.get_nowait()
@@ -3177,9 +3181,9 @@ class CircleTrackerGUI:
                     elif key == "det_age":
                         self.mp_det_age = float(val)
                     elif key == "vision_err":
-                        self.worker_error = f"视觉进程错误: {val}"
+                        self.mp_last_error = f"视觉进程错误: {val}"
                     elif key == "control_err":
-                        self.worker_error = f"控制进程错误: {val}"
+                        self.mp_last_error = f"控制进程错误: {val}"
                     elif key == "control_pan":
                         self.mp_pan = float(val)
                     elif key == "control_tilt":
@@ -3219,6 +3223,9 @@ class CircleTrackerGUI:
             elif self.aggressive_perf_mode.get():
                 self.preview_label.configure(image="", text="AGGRESSIVE MODE")
                 self.preview_label.image = None
+            elif not self.multiprocess_preview.get():
+                self.preview_label.configure(image="", text="MULTIPROCESS PREVIEW OFF")
+                self.preview_label.image = None
             if self.mp_latest_detection is not None and self.mp_latest_detection[5] > 0.5:
                 self.mp_det_age = max(0.0, time.time() - float(self.mp_latest_detection[4]))
             self.servo_status_mode.set("无刷RS485(MP)")
@@ -3228,6 +3235,8 @@ class CircleTrackerGUI:
             self.status_text.set(
                 f"多进程重构中 V={int(vision_alive)} C={int(control_alive)} 视觉Hz={self.mp_vision_hz:.1f} 控制Hz={self.mp_control_hz:.1f} 检测Age={self.mp_det_age:.3f}s 水平={self.mp_pan:.2f} 俯仰={self.mp_tilt:.2f}"
             )
+            if self.mp_last_error:
+                self.status_text.set(self.status_text.get() + f" 错误={self.mp_last_error}")
             self.after_id = self.root.after(80, self._ui_loop)
             return
         latest = None
