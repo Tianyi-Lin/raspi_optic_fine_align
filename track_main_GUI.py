@@ -330,6 +330,11 @@ class CircleTrackerGUI:
         self.tilt_id = tk.IntVar(value=2)
         self.control_period_ms = tk.IntVar(value=50)
         self.stab_period_ms = tk.IntVar(value=12)
+        self.core_affinity_enabled = tk.BooleanVar(value=False)
+        self.core_ui = tk.IntVar(value=0)
+        self.core_control = tk.IntVar(value=1)
+        self.core_vision = tk.IntVar(value=2)
+        self.core_stabilize = tk.IntVar(value=3)
         self.track_enabled = tk.BooleanVar(value=True)
         self.pan_enabled = tk.BooleanVar(value=True)
         self.tilt_enabled = tk.BooleanVar(value=True)
@@ -516,6 +521,11 @@ class CircleTrackerGUI:
             "tilt_id": 2,
             "control_period_ms": 50,
             "stab_period_ms": 12,
+            "core_affinity_enabled": False,
+            "core_ui": 0,
+            "core_control": 1,
+            "core_vision": 2,
+            "core_stabilize": 3,
             "kp_x": 0.0075,
             "ki_x": 0.025,
             "kd_x": 0.000005,
@@ -636,6 +646,11 @@ class CircleTrackerGUI:
                 "tilt_id": safe_int(self.tilt_id, "tilt_id"),
                 "control_period_ms": safe_int(self.control_period_ms, "control_period_ms"),
                 "stab_period_ms": safe_int(self.stab_period_ms, "stab_period_ms"),
+                "core_affinity_enabled": safe_bool(self.core_affinity_enabled),
+                "core_ui": safe_int(self.core_ui, "core_ui"),
+                "core_control": safe_int(self.core_control, "core_control"),
+                "core_vision": safe_int(self.core_vision, "core_vision"),
+                "core_stabilize": safe_int(self.core_stabilize, "core_stabilize"),
                 "track_enabled": safe_bool(self.track_enabled),
                 "pan_enabled": safe_bool(self.pan_enabled),
                 "tilt_enabled": safe_bool(self.tilt_enabled),
@@ -729,6 +744,11 @@ class CircleTrackerGUI:
             "tilt_id": 2,
             "control_period_ms": 50,
             "stab_period_ms": 12,
+            "core_affinity_enabled": False,
+            "core_ui": 0,
+            "core_control": 1,
+            "core_vision": 2,
+            "core_stabilize": 3,
             "track_enabled": True,
             "pan_enabled": True,
             "tilt_enabled": True,
@@ -832,6 +852,11 @@ class CircleTrackerGUI:
             "tilt_id": safe_int(self.tilt_id, "tilt_id"),
             "control_period_ms": safe_int(self.control_period_ms, "control_period_ms"),
             "stab_period_ms": safe_int(self.stab_period_ms, "stab_period_ms"),
+            "core_affinity_enabled": safe_bool(self.core_affinity_enabled, "core_affinity_enabled"),
+            "core_ui": safe_int(self.core_ui, "core_ui"),
+            "core_control": safe_int(self.core_control, "core_control"),
+            "core_vision": safe_int(self.core_vision, "core_vision"),
+            "core_stabilize": safe_int(self.core_stabilize, "core_stabilize"),
             "track_enabled": safe_bool(self.track_enabled, "track_enabled"),
             "pan_enabled": safe_bool(self.pan_enabled, "pan_enabled"),
             "tilt_enabled": safe_bool(self.tilt_enabled, "tilt_enabled"),
@@ -939,6 +964,11 @@ class CircleTrackerGUI:
             "tilt_id": self.tilt_id,
             "control_period_ms": self.control_period_ms,
             "stab_period_ms": self.stab_period_ms,
+            "core_affinity_enabled": self.core_affinity_enabled,
+            "core_ui": self.core_ui,
+            "core_control": self.core_control,
+            "core_vision": self.core_vision,
+            "core_stabilize": self.core_stabilize,
             "track_enabled": self.track_enabled,
             "pan_enabled": self.pan_enabled,
             "tilt_enabled": self.tilt_enabled,
@@ -1046,6 +1076,11 @@ class CircleTrackerGUI:
                 "tilt_id": int(self.tilt_id.get()),
                 "control_period_ms": int(self.control_period_ms.get()),
                 "stab_period_ms": int(self.stab_period_ms.get()),
+                "core_affinity_enabled": bool(self.core_affinity_enabled.get()),
+                "core_ui": int(self.core_ui.get()),
+                "core_control": int(self.core_control.get()),
+                "core_vision": int(self.core_vision.get()),
+                "core_stabilize": int(self.core_stabilize.get()),
                 "track_enabled": bool(self.track_enabled.get()),
                 "pan_enabled": bool(self.pan_enabled.get()),
                 "tilt_enabled": bool(self.tilt_enabled.get()),
@@ -1157,6 +1192,11 @@ class CircleTrackerGUI:
             self.tilt_id,
             self.control_period_ms,
             self.stab_period_ms,
+            self.core_affinity_enabled,
+            self.core_ui,
+            self.core_control,
+            self.core_vision,
+            self.core_stabilize,
             self.track_enabled,
             self.pan_enabled,
             self.tilt_enabled,
@@ -1289,6 +1329,14 @@ class CircleTrackerGUI:
         r += 1
         self._grid_entry(tab_basic, r, 0, "控制周期ms", self.control_period_ms, width=8)
         self._grid_entry(tab_basic, r, 2, "稳定周期ms", self.stab_period_ms, width=8)
+        r += 1
+        ttk.Checkbutton(tab_basic, text="绑定CPU核心", variable=self.core_affinity_enabled).grid(row=r, column=0, sticky="w", pady=(2, 2))
+        self._grid_entry(tab_basic, r, 2, "UI核", self.core_ui, width=6)
+        r += 1
+        self._grid_entry(tab_basic, r, 0, "控制核", self.core_control, width=6)
+        self._grid_entry(tab_basic, r, 2, "视觉核", self.core_vision, width=6)
+        r += 1
+        self._grid_entry(tab_basic, r, 0, "稳定核", self.core_stabilize, width=6)
         r += 1
         self._grid_entry(tab_basic, r, 0, "点动角度", self.jog_step_deg, width=8)
         r += 1
@@ -1716,6 +1764,21 @@ class CircleTrackerGUI:
 
         return row + 1
 
+    def _bind_current_thread_core(self, core_index):
+        try:
+            if not self.core_affinity_enabled.get():
+                return False
+            if os.name != "posix":
+                return False
+            if not hasattr(os, "sched_setaffinity"):
+                return False
+            core = max(0, int(core_index))
+            tid = threading.get_native_id() if hasattr(threading, "get_native_id") else os.getpid()
+            os.sched_setaffinity(tid, {core})
+            return True
+        except Exception:
+            return False
+
     def _start_runtime(self):
         if self.running:
             return
@@ -1726,6 +1789,7 @@ class CircleTrackerGUI:
             self.camera_reconfigure_event.clear()
             self.worker_error = None
             self._update_settings_from_vars()
+            self._bind_current_thread_core(self.core_ui.get())
             self._ensure_camera()
             self.running = True
             
@@ -1819,6 +1883,7 @@ class CircleTrackerGUI:
                 self.servo.tilt_speed_dps = tilt_backup
 
     def _worker_loop(self):
+        self._bind_current_thread_core(self.core_control.get())
         try:
             last_time = time.time()
             while not self.stop_event.is_set():
@@ -2180,6 +2245,7 @@ class CircleTrackerGUI:
             self.stop_event.set()
 
     def _stabilization_loop(self):
+        self._bind_current_thread_core(self.core_stabilize.get())
         last_time = time.time()
         try:
             while not self.stab_stop_event.is_set():
@@ -2300,6 +2366,7 @@ class CircleTrackerGUI:
             self.stop_event.set()
 
     def _detect_loop(self):
+        self._bind_current_thread_core(self.core_vision.get())
         last_processed_id = 0
         try:
             while not self.detect_stop_event.is_set():
