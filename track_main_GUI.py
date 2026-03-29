@@ -1493,7 +1493,7 @@ class CircleTrackerGUI:
         cam.columnconfigure(0, weight=1)
         rc = 0
         rc = self._grid_slider(cam, rc, 0, "相机FPS", self.camera_fps, 10, 120)
-        rc = self._grid_slider(cam, rc, 0, "图像旋转(°)", self.image_rotate_deg, -30.0, 30.0)
+        rc = self._grid_slider(cam, rc, 0, "图像旋转(°)", self.image_rotate_deg, -180.0, 180.0)
         
         # 添加红色警告提示Label (初始隐藏或为空)
         self.fps_warning_var = tk.StringVar(value="")
