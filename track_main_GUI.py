@@ -114,6 +114,7 @@ def _vision_process_main(stop_event, settings_queue, status_queue, latest_det):
         "camera_raw_width": 640,
         "camera_raw_height": 640,
         "camera_fps": 60,
+        "multiprocess_preview": True,
         "ksize": 5,
         "min_dist": 80,
         "param1": 220,
@@ -203,6 +204,17 @@ def _vision_process_main(stop_event, settings_queue, status_queue, latest_det):
             last_fps_push = ts
             try:
                 status_queue.put_nowait(("vision_hz", hz))
+                if bool(settings.get("multiprocess_preview", True)):
+                    preview = frame
+                    if det is not None:
+                        cv2.circle(preview, (int(det[0]), int(det[1])), int(det[2]), (0, 0, 255), 2)
+                        cv2.circle(preview, (int(det[0]), int(det[1])), 3, (0, 255, 0), -1)
+                    ph = max(120, int(preview.shape[0] * 0.5))
+                    pw = max(160, int(preview.shape[1] * 0.5))
+                    preview = cv2.resize(preview, (pw, ph), interpolation=cv2.INTER_AREA)
+                    ok, enc = cv2.imencode(".jpg", preview, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                    if ok:
+                        status_queue.put_nowait(("preview_jpg", enc.tobytes()))
             except Exception:
                 pass
     try:
@@ -781,6 +793,7 @@ class CircleTrackerGUI:
         self.mp_det_age = -1.0
         self.mp_pan = 0.0
         self.mp_tilt = 0.0
+        self.mp_preview_jpg = None
         self.stop_event = threading.Event()
         self.detect_stop_event = threading.Event()
         self.stab_stop_event = threading.Event()
@@ -905,6 +918,7 @@ class CircleTrackerGUI:
         self.status_log_widget = None
         self.show_debug_panels = tk.BooleanVar(value=False)
         self.aggressive_perf_mode = tk.BooleanVar(value=False)
+        self.multiprocess_preview = tk.BooleanVar(value=True)
 
         self.auto_stabilize = tk.BooleanVar(value=False)
         self.stab_gain_pitch = tk.DoubleVar(value=1.0)
@@ -1826,6 +1840,11 @@ class CircleTrackerGUI:
             variable=self.aggressive_perf_mode,
             command=self._on_aggressive_perf_mode_toggle,
         ).pack(anchor=tk.W, pady=(2, 0))
+        ttk.Checkbutton(
+            right,
+            text="多进程显示预览",
+            variable=self.multiprocess_preview,
+        ).pack(anchor=tk.W, pady=(2, 0))
         self.status_log_widget = scrolledtext.ScrolledText(right, height=6, wrap=tk.WORD)
         self.status_log_widget.pack(fill=tk.X, pady=(4, 0))
         self.status_log_widget.configure(state=tk.DISABLED)
@@ -2392,6 +2411,7 @@ class CircleTrackerGUI:
         self.mp_control_proc.start()
         settings = self._get_settings()
         settings["tracking_active"] = bool(self.tracking_active)
+        settings["multiprocess_preview"] = bool(self.multiprocess_preview.get())
         try:
             self.mp_vision_settings_queue.put_nowait(settings)
             self.mp_control_settings_queue.put_nowait(settings)
@@ -2423,12 +2443,14 @@ class CircleTrackerGUI:
         self.mp_control_cmd_queue = None
         self.mp_status_queue = None
         self.mp_latest_detection = None
+        self.mp_preview_jpg = None
 
     def _push_multiprocess_settings(self):
         if self.mp_vision_settings_queue is None or self.mp_control_settings_queue is None:
             return
         s = self._get_settings()
         s["tracking_active"] = bool(self.tracking_active)
+        s["multiprocess_preview"] = bool(self.multiprocess_preview.get())
         for q in (self.mp_vision_settings_queue, self.mp_control_settings_queue):
             try:
                 if q.full():
@@ -3158,8 +3180,25 @@ class CircleTrackerGUI:
                             self.imu_status_age.set(f"{float(val):.2f}s")
                         else:
                             self.imu_status_age.set("-")
+                    elif key == "preview_jpg":
+                        self.mp_preview_jpg = val
             except Exception:
                 pass
+            if not self.aggressive_perf_mode.get() and self.multiprocess_preview.get() and self.mp_preview_jpg is not None:
+                try:
+                    arr = np.frombuffer(self.mp_preview_jpg, dtype=np.uint8)
+                    img_bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+                    if img_bgr is not None:
+                        img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+                        image = Image.fromarray(img_rgb)
+                        photo = ImageTk.PhotoImage(image=image)
+                        self.preview_label.configure(image=photo, text="")
+                        self.preview_label.image = photo
+                except Exception:
+                    pass
+            elif self.aggressive_perf_mode.get():
+                self.preview_label.configure(image="", text="AGGRESSIVE MODE")
+                self.preview_label.image = None
             if self.mp_latest_detection is not None and self.mp_latest_detection[5] > 0.5:
                 self.mp_det_age = max(0.0, time.time() - float(self.mp_latest_detection[4]))
             self.status_text.set(
