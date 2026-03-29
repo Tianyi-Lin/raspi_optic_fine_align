@@ -1051,6 +1051,9 @@ class CircleTrackerGUI:
         self.mp_pan = 0.0
         self.mp_tilt = 0.0
         self.mp_preview_jpg = None
+        self.mp_preview_seq = 0
+        self._last_render_seq = -1
+        self._last_render_ts = 0.0
         self.mp_last_error = ""
         self.stop_event = threading.Event()
         self.detect_stop_event = threading.Event()
@@ -1171,6 +1174,7 @@ class CircleTrackerGUI:
         self.camera_fps = tk.IntVar(value=120)
         self.ui_refresh_hz = tk.IntVar(value=30)
         self.preview_push_hz = tk.IntVar(value=15)
+        self.preview_render_hz = tk.IntVar(value=20)
         self.camera_raw_width = tk.IntVar(value=640)
         self.camera_raw_height = tk.IntVar(value=640)
         self.sensor_bit_depth = tk.IntVar(value=10)
@@ -1254,7 +1258,7 @@ class CircleTrackerGUI:
         self._preview_box_size = None
         self._autosize_window()
         try:
-            self.preview_frame.bind("<Configure>", self._on_preview_frame_configure)
+            self.preview_container.bind("<Configure>", self._on_preview_container_configure)
         except Exception:
             pass
         self.status_text.trace_add("write", self._on_status_text_changed)
@@ -1351,14 +1355,23 @@ class CircleTrackerGUI:
         except Exception:
             pass
 
-    def _on_preview_frame_configure(self, event):
+    def _on_preview_container_configure(self, event):
         try:
             w = int(event.width)
             h = int(event.height)
         except Exception:
             return
-        if w >= 64 and h >= 64:
-            self._preview_box_size = (w, h)
+        side = max(64, min(w, h))
+        try:
+            self.preview_frame.place_configure(
+                x=(w - side) // 2,
+                y=(h - side) // 2,
+                width=side,
+                height=side,
+            )
+        except Exception:
+            pass
+        self._preview_box_size = (side, side)
 
     def _ui_refresh_delay_ms(self):
         try:
@@ -2296,8 +2309,14 @@ class CircleTrackerGUI:
         right = ttk.Frame(main)
         right.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
-        self.preview_frame = ttk.Frame(right)
-        self.preview_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        self.preview_container = ttk.Frame(right)
+        self.preview_container.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        try:
+            self.preview_container.pack_propagate(False)
+        except Exception:
+            pass
+        self.preview_frame = ttk.Frame(self.preview_container)
+        self.preview_frame.place(x=0, y=0, width=320, height=320)
         try:
             self.preview_frame.pack_propagate(False)
         except Exception:
@@ -2702,6 +2721,7 @@ class CircleTrackerGUI:
         rc = self._grid_slider(cam, rc, 0, "相机FPS", self.camera_fps, 10, 120)
         rc = self._grid_slider(cam, rc, 0, "GUI刷新Hz", self.ui_refresh_hz, 5, 60)
         rc = self._grid_slider(cam, rc, 0, "多进程预览Hz", self.preview_push_hz, 2, 30)
+        rc = self._grid_slider(cam, rc, 0, "显示刷新Hz", self.preview_render_hz, 2, 60)
         rotate_frame = ttk.Frame(cam)
         rotate_frame.grid(row=rc, column=0, sticky="ew", pady=(2, 6))
         rotate_frame.columnconfigure(0, weight=1)
@@ -3754,9 +3774,19 @@ class CircleTrackerGUI:
                         self.imu_status_yaw_delta.set("+0.00")
                     elif key == "preview_jpg":
                         self.mp_preview_jpg = val
+                        self.mp_preview_seq += 1
             except Exception:
                 pass
-            if not self.aggressive_perf_mode.get() and self.multiprocess_preview.get() and self.mp_preview_jpg is not None:
+            render_period = 1.0 / max(1.0, float(self.preview_render_hz.get()))
+            now_ts = time.time()
+            should_render = (
+                not self.aggressive_perf_mode.get()
+                and self.multiprocess_preview.get()
+                and self.mp_preview_jpg is not None
+                and self.mp_preview_seq != self._last_render_seq
+                and (now_ts - self._last_render_ts) >= render_period
+            )
+            if should_render:
                 try:
                     arr = np.frombuffer(self.mp_preview_jpg, dtype=np.uint8)
                     img_bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
@@ -3767,6 +3797,8 @@ class CircleTrackerGUI:
                         photo = ImageTk.PhotoImage(image=image)
                         self.preview_label.configure(image=photo, text="")
                         self.preview_label.image = photo
+                        self._last_render_seq = int(self.mp_preview_seq)
+                        self._last_render_ts = float(now_ts)
                 except Exception:
                     pass
             elif self.aggressive_perf_mode.get():
@@ -3825,69 +3857,74 @@ class CircleTrackerGUI:
             
             h, w = frame_rgb.shape[:2]
             center_x, center_y = w // 2, h // 2
+            render_period = 1.0 / max(1.0, float(self.preview_render_hz.get()))
+            now_ts = time.time()
+            render_now = (now_ts - float(getattr(self, "_last_render_ts", 0.0))) >= render_period
             if not self.aggressive_perf_mode.get():
-                self._draw_overlay(
-                    frame=frame_rgb,
-                    center=(center_x, center_y),
-                    detection=detection,
-                    target=(int(round(target_x)), int(round(target_y))),
-                    pred=(int(round(pred_x)), int(round(pred_y))),
-                    radius=radius,
-                    error=(error_x, error_y),
-                    dt=dt,
-                    bounds=bounds,
-                    laser_spot=laser_spot_display,
-                )
-                frame_rgb_disp = cv2.cvtColor(frame_rgb, cv2.COLOR_BGR2RGB)
-                if abs(error_x) <= deadband and abs(error_y) <= deadband and circle_found:
-                    cv2.putText(frame_rgb_disp, "ALIGNMENT COMPLETE", (10, h - 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
-                    if current_distance > 0:
-                        cv2.putText(frame_rgb_disp, f"{current_distance:.3f} m", (10, h - 70), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
+                if render_now:
+                    self._draw_overlay(
+                        frame=frame_rgb,
+                        center=(center_x, center_y),
+                        detection=detection,
+                        target=(int(round(target_x)), int(round(target_y))),
+                        pred=(int(round(pred_x)), int(round(pred_y))),
+                        radius=radius,
+                        error=(error_x, error_y),
+                        dt=dt,
+                        bounds=bounds,
+                        laser_spot=laser_spot_display,
+                    )
+                    frame_rgb_disp = cv2.cvtColor(frame_rgb, cv2.COLOR_BGR2RGB)
+                    if abs(error_x) <= deadband and abs(error_y) <= deadband and circle_found:
+                        cv2.putText(frame_rgb_disp, "ALIGNMENT COMPLETE", (10, h - 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+                        if current_distance > 0:
+                            cv2.putText(frame_rgb_disp, f"{current_distance:.3f} m", (10, h - 70), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
 
-                if self.show_debug_panels.get() and green_data is not None:
-                    blurred_green, blurred_red, offset_x, offset_y, scale = green_data
-                    box = getattr(self, "_preview_box_size", None)
-                    if box is None:
-                        target_w, target_h = w, h
+                    if self.show_debug_panels.get() and green_data is not None:
+                        blurred_green, blurred_red, offset_x, offset_y, scale = green_data
+                        box = getattr(self, "_preview_box_size", None)
+                        if box is None:
+                            target_w, target_h = w, h
+                        else:
+                            target_w, target_h = int(box[0]), int(box[1])
+                        target_w = max(160, target_w)
+                        target_h = max(120, target_h)
+                        panel_w = max(80, target_w // 2)
+                        panel_h = max(60, target_h // 2)
+
+                        main_panel = self._resize_crop(frame_rgb_disp, panel_w, panel_h)
+
+                        green_gray = self._resize_crop(blurred_green, panel_w, panel_h)
+                        red_gray = self._resize_crop(blurred_red, panel_w, panel_h)
+                        green_panel = np.zeros((panel_h, panel_w, 3), dtype=np.uint8)
+                        red_panel = np.zeros((panel_h, panel_w, 3), dtype=np.uint8)
+                        green_panel[:, :, 1] = green_gray
+                        red_panel[:, :, 0] = red_gray
+
+                        if self.laser_align_mode.get():
+                            _, binary = cv2.threshold(blurred_red, laser_threshold, 255, cv2.THRESH_BINARY)
+                            bin_gray = self._resize_crop(binary, panel_w, panel_h, interpolation_down=cv2.INTER_NEAREST, interpolation_up=cv2.INTER_NEAREST)
+                            bin_panel = cv2.cvtColor(bin_gray, cv2.COLOR_GRAY2RGB)
+                        else:
+                            bin_panel = np.zeros((panel_h, panel_w, 3), dtype=np.uint8)
+
+                        cv2.putText(main_panel, "Main", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
+                        cv2.putText(green_panel, "Green", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+                        cv2.putText(red_panel, "Red", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 0, 0), 2)
+                        cv2.putText(bin_panel, "Laser Bin" if self.laser_align_mode.get() else "Bin Off", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (200, 200, 200), 2)
+
+                        top_row = np.hstack((main_panel, green_panel))
+                        bottom_row = np.hstack((red_panel, bin_panel))
+                        frame_rgb_show = np.vstack((top_row, bottom_row))
                     else:
-                        target_w, target_h = int(box[0]), int(box[1])
-                    target_w = max(160, target_w)
-                    target_h = max(120, target_h)
-                    panel_w = max(80, target_w // 2)
-                    panel_h = max(60, target_h // 2)
+                        frame_rgb_show = frame_rgb_disp
 
-                    main_panel = self._resize_crop(frame_rgb_disp, panel_w, panel_h)
-
-                    green_gray = self._resize_crop(blurred_green, panel_w, panel_h)
-                    red_gray = self._resize_crop(blurred_red, panel_w, panel_h)
-                    green_panel = np.zeros((panel_h, panel_w, 3), dtype=np.uint8)
-                    red_panel = np.zeros((panel_h, panel_w, 3), dtype=np.uint8)
-                    green_panel[:, :, 1] = green_gray
-                    red_panel[:, :, 0] = red_gray
-
-                    if self.laser_align_mode.get():
-                        _, binary = cv2.threshold(blurred_red, laser_threshold, 255, cv2.THRESH_BINARY)
-                        bin_gray = self._resize_crop(binary, panel_w, panel_h, interpolation_down=cv2.INTER_NEAREST, interpolation_up=cv2.INTER_NEAREST)
-                        bin_panel = cv2.cvtColor(bin_gray, cv2.COLOR_GRAY2RGB)
-                    else:
-                        bin_panel = np.zeros((panel_h, panel_w, 3), dtype=np.uint8)
-
-                    cv2.putText(main_panel, "Main", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
-                    cv2.putText(green_panel, "Green", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
-                    cv2.putText(red_panel, "Red", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 0, 0), 2)
-                    cv2.putText(bin_panel, "Laser Bin" if self.laser_align_mode.get() else "Bin Off", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (200, 200, 200), 2)
-
-                    top_row = np.hstack((main_panel, green_panel))
-                    bottom_row = np.hstack((red_panel, bin_panel))
-                    frame_rgb_show = np.vstack((top_row, bottom_row))
-                else:
-                    frame_rgb_show = frame_rgb_disp
-
-                frame_rgb_show = self._fit_preview_image(frame_rgb_show)
-                image = Image.fromarray(frame_rgb_show)
-                photo = ImageTk.PhotoImage(image=image)
-                self.preview_label.configure(image=photo, text="")
-                self.preview_label.image = photo
+                    frame_rgb_show = self._fit_preview_image(frame_rgb_show)
+                    image = Image.fromarray(frame_rgb_show)
+                    photo = ImageTk.PhotoImage(image=image)
+                    self.preview_label.configure(image=photo, text="")
+                    self.preview_label.image = photo
+                    self._last_render_ts = float(now_ts)
             else:
                 self.preview_label.configure(image="", text="AGGRESSIVE MODE")
                 self.preview_label.image = None
