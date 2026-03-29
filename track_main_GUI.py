@@ -237,6 +237,33 @@ def _control_process_main(stop_event, settings_queue, status_queue, latest_det):
         "tilt_max": 360.0,
         "brushless_pan_speed_dps": 120.0,
         "brushless_tilt_speed_dps": 120.0,
+        "imu_port": "/dev/ttyUSB0",
+        "imu_baudrate": 9600,
+        "imu_use_6axis": True,
+        "imu_output_hz": 50,
+        "imu_ax_offset_g": 0.0,
+        "imu_ay_offset_g": 0.0,
+        "imu_az_offset_g": 0.0,
+        "imu_gx_offset_dps": 0.0,
+        "imu_gy_offset_dps": 0.0,
+        "imu_gz_offset_dps": 0.0,
+        "imu_hx_offset": 0,
+        "imu_hy_offset": 0,
+        "imu_hz_offset": 0,
+        "imu_az_reference_g": 1.0,
+        "auto_stabilize": False,
+        "stab_gain_pitch": 1.0,
+        "stab_gain_yaw": 1.0,
+        "stab_pitch_deadband_deg": 0.6,
+        "stab_yaw_deadband_deg": 0.6,
+        "stab_tilt_limit_deg": 8.0,
+        "stab_pan_limit_deg": 8.0,
+        "stab_tilt_alpha": 0.35,
+        "stab_pan_alpha": 0.35,
+        "stab_tilt_rate_limit_deg_per_s": 120.0,
+        "stab_pan_rate_limit_deg_per_s": 120.0,
+        "stab_invert_x": False,
+        "stab_invert_y": False,
     }
     pid_x = PID(kP=0.0075, kI=0.025, kD=0.000005, output_bound_low=-12, output_bound_high=12)
     pid_y = PID(kP=0.01, kI=0.02, kD=0.000005, output_bound_low=-12, output_bound_high=12)
@@ -244,6 +271,12 @@ def _control_process_main(stop_event, settings_queue, status_queue, latest_det):
     current_tilt = 0.0
     servo = None
     servo_key = None
+    imu = None
+    imu_key = None
+    imu_zero_pitch = 0.0
+    imu_zero_yaw = 0.0
+    stab_pan_filtered = 0.0
+    stab_tilt_filtered = 0.0
     last_ts = time.time()
     last_push = 0.0
     while not stop_event.is_set():
@@ -326,6 +359,54 @@ def _control_process_main(stop_event, settings_queue, status_queue, latest_det):
                 servo.tilt_speed_dps = float(settings.get("brushless_tilt_speed_dps", 120.0))
             except Exception:
                 pass
+        imu_desired_key = (
+            settings.get("imu_port"),
+            settings.get("imu_baudrate"),
+            bool(settings.get("imu_use_6axis", True)),
+            settings.get("imu_output_hz"),
+            float(settings.get("imu_ax_offset_g", 0.0)),
+            float(settings.get("imu_ay_offset_g", 0.0)),
+            float(settings.get("imu_az_offset_g", 0.0)),
+            float(settings.get("imu_gx_offset_dps", 0.0)),
+            float(settings.get("imu_gy_offset_dps", 0.0)),
+            float(settings.get("imu_gz_offset_dps", 0.0)),
+            int(settings.get("imu_hx_offset", 0)),
+            int(settings.get("imu_hy_offset", 0)),
+            int(settings.get("imu_hz_offset", 0)),
+            float(settings.get("imu_az_reference_g", 1.0)),
+        )
+        if imu is None or imu_key != imu_desired_key:
+            try:
+                if imu is not None:
+                    imu.close()
+            except Exception:
+                pass
+            imu = None
+            try:
+                imu = IMUReader(
+                    port=str(settings.get("imu_port", "/dev/ttyUSB0")),
+                    baudrate=int(settings.get("imu_baudrate", 9600)),
+                    use_6axis=bool(settings.get("imu_use_6axis", True)),
+                    output_hz=int(settings.get("imu_output_hz", 50)),
+                    ax_offset_g=float(settings.get("imu_ax_offset_g", 0.0)),
+                    ay_offset_g=float(settings.get("imu_ay_offset_g", 0.0)),
+                    az_offset_g=float(settings.get("imu_az_offset_g", 0.0)),
+                    gx_offset_dps=float(settings.get("imu_gx_offset_dps", 0.0)),
+                    gy_offset_dps=float(settings.get("imu_gy_offset_dps", 0.0)),
+                    gz_offset_dps=float(settings.get("imu_gz_offset_dps", 0.0)),
+                    hx_offset=int(settings.get("imu_hx_offset", 0)),
+                    hy_offset=int(settings.get("imu_hy_offset", 0)),
+                    hz_offset=int(settings.get("imu_hz_offset", 0)),
+                    az_reference_g=float(settings.get("imu_az_reference_g", 1.0)),
+                )
+                imu_key = imu_desired_key
+            except Exception as exc:
+                imu = None
+                imu_key = None
+                try:
+                    status_queue.put_nowait(("control_err", f"IMU init: {exc}"))
+                except Exception:
+                    pass
         now = time.time()
         dt = max(1e-3, (now - last_ts))
         hz = 1.0 / dt
@@ -335,6 +416,8 @@ def _control_process_main(stop_event, settings_queue, status_queue, latest_det):
         tracking_enabled = bool(settings.get("track_enabled", True)) and bool(settings.get("tracking_active", False))
         pid_x.set_gains(float(settings.get("kp_x", 0.0075)), float(settings.get("ki_x", 0.025)), float(settings.get("kd_x", 0.000005)))
         pid_y.set_gains(float(settings.get("kp_y", 0.01)), float(settings.get("ki_y", 0.02)), float(settings.get("kd_y", 0.000005)))
+        delta_x = 0.0
+        delta_y = 0.0
         if tracking_enabled and valid and age <= 0.3 and servo is not None:
             cx = float(latest_det[0])
             cy = float(latest_det[1])
@@ -347,16 +430,66 @@ def _control_process_main(stop_event, settings_queue, status_queue, latest_det):
                 error_x = 0.0
             if abs(error_y) <= deadband:
                 error_y = 0.0
-            delta_x = pid_x.update(error_x, dt=dt)
-            delta_y = pid_y.update(error_y, dt=dt)
+            delta_x = float(pid_x.update(error_x, dt=dt))
+            delta_y = float(pid_y.update(error_y, dt=dt))
+        else:
+            pid_x.reset()
+            pid_y.reset()
+        stab_pan = 0.0
+        stab_tilt = 0.0
+        imu_pitch = 0.0
+        imu_yaw = 0.0
+        imu_age = -1.0
+        if bool(settings.get("auto_stabilize", False)) and imu is not None:
+            try:
+                imu_state = imu.get_state()
+            except Exception as exc:
+                imu_state = None
+                try:
+                    status_queue.put_nowait(("control_err", f"IMU read: {exc}"))
+                except Exception:
+                    pass
+            if imu_state is not None and imu_state.last_update > 0:
+                imu_pitch = float(imu_state.pitch_deg)
+                imu_yaw = float(imu_state.yaw_deg)
+                imu_age = max(0.0, now - float(imu_state.last_update))
+                pitch_err = ((imu_pitch - imu_zero_pitch + 180.0) % 360.0) - 180.0
+                yaw_err = ((imu_yaw - imu_zero_yaw + 180.0) % 360.0) - 180.0
+                if bool(settings.get("stab_invert_y", False)):
+                    pitch_err = -pitch_err
+                if bool(settings.get("stab_invert_x", False)):
+                    yaw_err = -yaw_err
+                pitch_deadband = max(0.0, float(settings.get("stab_pitch_deadband_deg", 0.6)))
+                yaw_deadband = max(0.0, float(settings.get("stab_yaw_deadband_deg", 0.6)))
+                if abs(pitch_err) <= pitch_deadband:
+                    pitch_err = 0.0
+                else:
+                    pitch_err = math.copysign(abs(pitch_err) - pitch_deadband, pitch_err)
+                if abs(yaw_err) <= yaw_deadband:
+                    yaw_err = 0.0
+                else:
+                    yaw_err = math.copysign(abs(yaw_err) - yaw_deadband, yaw_err)
+                tilt_limit = max(0.0, float(settings.get("stab_tilt_limit_deg", 8.0)))
+                pan_limit = max(0.0, float(settings.get("stab_pan_limit_deg", 8.0)))
+                stab_tilt_target = max(-tilt_limit, min(tilt_limit, pitch_err * float(settings.get("stab_gain_pitch", 1.0))))
+                stab_pan_target = max(-pan_limit, min(pan_limit, -yaw_err * float(settings.get("stab_gain_yaw", 1.0))))
+                tilt_alpha = max(0.0, min(1.0, float(settings.get("stab_tilt_alpha", 0.35))))
+                pan_alpha = max(0.0, min(1.0, float(settings.get("stab_pan_alpha", 0.35))))
+                stab_tilt_filtered = stab_tilt_filtered + tilt_alpha * (stab_tilt_target - stab_tilt_filtered)
+                stab_pan_filtered = stab_pan_filtered + pan_alpha * (stab_pan_target - stab_pan_filtered)
+                tilt_rate = max(0.0, float(settings.get("stab_tilt_rate_limit_deg_per_s", 120.0)))
+                pan_rate = max(0.0, float(settings.get("stab_pan_rate_limit_deg_per_s", 120.0)))
+                stab_tilt = max(-tilt_rate * dt, min(tilt_rate * dt, stab_tilt_filtered))
+                stab_pan = max(-pan_rate * dt, min(pan_rate * dt, stab_pan_filtered))
+        if servo is not None:
             pan_min = float(settings.get("pan_min", -360.0))
             pan_max = float(settings.get("pan_max", 360.0))
             tilt_min = float(settings.get("tilt_min", -360.0))
             tilt_max = float(settings.get("tilt_max", 360.0))
             if bool(settings.get("pan_enabled", True)):
-                current_pan = max(pan_min, min(pan_max, current_pan + float(delta_x)))
+                current_pan = max(pan_min, min(pan_max, current_pan + delta_x + stab_pan))
             if bool(settings.get("tilt_enabled", True)):
-                current_tilt = max(tilt_min, min(tilt_max, current_tilt + float(delta_y)))
+                current_tilt = max(tilt_min, min(tilt_max, current_tilt + delta_y + stab_tilt))
             try:
                 servo.set_angles(
                     [
@@ -376,15 +509,15 @@ def _control_process_main(stop_event, settings_queue, status_queue, latest_det):
                     pass
                 servo = None
                 servo_key = None
-        else:
-            pid_x.reset()
-            pid_y.reset()
         if now - last_push >= 0.25:
             try:
                 status_queue.put_nowait(("control_hz", hz))
                 status_queue.put_nowait(("det_age", age))
                 status_queue.put_nowait(("control_pan", current_pan))
                 status_queue.put_nowait(("control_tilt", current_tilt))
+                status_queue.put_nowait(("imu_pitch", imu_pitch))
+                status_queue.put_nowait(("imu_yaw", imu_yaw))
+                status_queue.put_nowait(("imu_age", imu_age))
             except Exception:
                 pass
             last_push = now
@@ -393,6 +526,11 @@ def _control_process_main(stop_event, settings_queue, status_queue, latest_det):
     try:
         if servo is not None:
             servo.cleanup()
+    except Exception:
+        pass
+    try:
+        if imu is not None:
+            imu.close()
     except Exception:
         pass
 
@@ -2977,6 +3115,15 @@ class CircleTrackerGUI:
                         self.mp_pan = float(val)
                     elif key == "control_tilt":
                         self.mp_tilt = float(val)
+                    elif key == "imu_pitch":
+                        self.imu_status_pitch.set(f"{float(val):+.2f}")
+                    elif key == "imu_yaw":
+                        self.imu_status_yaw.set(f"{float(val):+.2f}")
+                    elif key == "imu_age":
+                        if float(val) >= 0:
+                            self.imu_status_age.set(f"{float(val):.2f}s")
+                        else:
+                            self.imu_status_age.set("-")
             except Exception:
                 pass
             if self.mp_latest_detection is not None and self.mp_latest_detection[5] > 0.5:
