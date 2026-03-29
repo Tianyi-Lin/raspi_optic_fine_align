@@ -133,7 +133,7 @@ def _vision_process_main(stop_event, settings_queue, status_queue, latest_det):
         "core_vision": "1,2",
         "camera_raw_width": 640,
         "camera_raw_height": 640,
-        "camera_fps": 60,
+        "camera_fps": 120,
         "multiprocess_preview": True,
         "sensor_bit_depth": 10,
         "video_crop_ratio": 1.0,
@@ -1049,7 +1049,7 @@ class CircleTrackerGUI:
         self.detect_ema_alpha = tk.DoubleVar(value=0.3)
         self.x_bias = tk.IntVar(value=0)
         self.y_bias = tk.IntVar(value=0)
-        self.camera_fps = tk.IntVar(value=60)
+        self.camera_fps = tk.IntVar(value=120)
         self.camera_raw_width = tk.IntVar(value=640)
         self.camera_raw_height = tk.IntVar(value=640)
         self.sensor_bit_depth = tk.IntVar(value=10)
@@ -3425,6 +3425,7 @@ class CircleTrackerGUI:
                     img_bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
                     if img_bgr is not None:
                         img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+                        img_rgb = self._fit_preview_image(img_rgb)
                         image = Image.fromarray(img_rgb)
                         photo = ImageTk.PhotoImage(image=image)
                         self.preview_label.configure(image=photo, text="")
@@ -3552,6 +3553,7 @@ class CircleTrackerGUI:
                 else:
                     frame_rgb_show = frame_rgb_disp
 
+                frame_rgb_show = self._fit_preview_image(frame_rgb_show)
                 image = Image.fromarray(frame_rgb_show)
                 photo = ImageTk.PhotoImage(image=image)
                 self.preview_label.configure(image=photo, text="")
@@ -4353,6 +4355,32 @@ class CircleTrackerGUI:
             if tilt_at_max:
                 cv2.line(frame, (0, h-1), (w, h-1), (0, 0, 255), 4)
                 cv2.putText(frame, "DOWN LIMIT", (w//2-60, h-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+
+    def _fit_preview_image(self, img_rgb):
+        try:
+            box_w = int(self.preview_label.winfo_width())
+            box_h = int(self.preview_label.winfo_height())
+        except Exception:
+            return img_rgb
+        if box_w < 32 or box_h < 32:
+            return img_rgb
+        ih, iw = img_rgb.shape[:2]
+        if iw <= 0 or ih <= 0:
+            return img_rgb
+        scale = max(box_w / float(iw), box_h / float(ih))
+        new_w = max(1, int(round(iw * scale)))
+        new_h = max(1, int(round(ih * scale)))
+        if new_w != iw or new_h != ih:
+            interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+            img_rgb = cv2.resize(img_rgb, (new_w, new_h), interpolation=interp)
+        x0 = max(0, (new_w - box_w) // 2)
+        y0 = max(0, (new_h - box_h) // 2)
+        x1 = min(new_w, x0 + box_w)
+        y1 = min(new_h, y0 + box_h)
+        out = img_rgb[y0:y1, x0:x1]
+        if out.shape[1] != box_w or out.shape[0] != box_h:
+            out = cv2.resize(out, (box_w, box_h), interpolation=cv2.INTER_LINEAR)
+        return out
 
     def on_close(self):
         if self._is_closing:
