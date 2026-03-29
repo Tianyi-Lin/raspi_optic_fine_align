@@ -362,6 +362,7 @@ class CircleTrackerGUI:
         self.status_text = tk.StringVar(value="就绪")
         self.status_log_widget = None
         self.show_debug_panels = tk.BooleanVar(value=False)
+        self.aggressive_perf_mode = tk.BooleanVar(value=False)
 
         self.auto_stabilize = tk.BooleanVar(value=False)
         self.stab_gain_pitch = tk.DoubleVar(value=1.0)
@@ -541,6 +542,7 @@ class CircleTrackerGUI:
             "hough_crop_height": 640,
             "image_rotate_deg": 0.0,
             "show_debug_panels": False,
+            "aggressive_perf_mode": False,
             "laser_align_mode": False,
             "laser_threshold": 240,
             "pan_min": -360.0,
@@ -664,6 +666,7 @@ class CircleTrackerGUI:
                 "hough_crop_height": safe_int(self.hough_crop_height, "hough_crop_height"),
                 "image_rotate_deg": safe_float(self.image_rotate_deg, "image_rotate_deg"),
                 "show_debug_panels": safe_bool(self.show_debug_panels),
+                "aggressive_perf_mode": safe_bool(self.aggressive_perf_mode),
                 "laser_align_mode": safe_bool(self.laser_align_mode),
                 "laser_threshold": safe_int(self.laser_threshold, "laser_threshold"),
                 "pan_min": safe_float(self.pan_min, "pan_min"),
@@ -755,6 +758,7 @@ class CircleTrackerGUI:
             "hough_crop_height": 640,
             "image_rotate_deg": 0.0,
             "show_debug_panels": False,
+            "aggressive_perf_mode": False,
             "pan_min": -360.0,
             "pan_max": 360.0,
             "tilt_min": -360.0,
@@ -858,6 +862,7 @@ class CircleTrackerGUI:
             "hough_crop_height": safe_int(self.hough_crop_height, "hough_crop_height"),
             "image_rotate_deg": safe_float(self.image_rotate_deg, "image_rotate_deg"),
             "show_debug_panels": safe_bool(self.show_debug_panels, "show_debug_panels"),
+            "aggressive_perf_mode": safe_bool(self.aggressive_perf_mode, "aggressive_perf_mode"),
             "laser_align_mode": safe_bool(self.laser_align_mode, "laser_align_mode"),
             "laser_threshold": safe_int(self.laser_threshold, "laser_threshold"),
             "pan_min": safe_float(self.pan_min, "pan_min"),
@@ -963,6 +968,7 @@ class CircleTrackerGUI:
             "hough_crop_height": self.hough_crop_height,
             "image_rotate_deg": self.image_rotate_deg,
             "show_debug_panels": self.show_debug_panels,
+            "aggressive_perf_mode": self.aggressive_perf_mode,
             "pan_min": self.pan_min,
             "pan_max": self.pan_max,
             "tilt_min": self.tilt_min,
@@ -1070,6 +1076,7 @@ class CircleTrackerGUI:
                 "hough_crop_height": int(self.hough_crop_height.get()),
                 "image_rotate_deg": float(self.image_rotate_deg.get()),
                 "show_debug_panels": bool(self.show_debug_panels.get()),
+                "aggressive_perf_mode": bool(self.aggressive_perf_mode.get()),
                 "laser_align_mode": bool(self.laser_align_mode.get()),
                 "laser_threshold": int(self.laser_threshold.get()),
                 "pan_min": float(self.pan_min.get()),
@@ -1179,6 +1186,7 @@ class CircleTrackerGUI:
             self.hough_crop_height,
             self.image_rotate_deg,
             self.show_debug_panels,
+            self.aggressive_perf_mode,
             self.camera_fps,
             self.laser_align_mode,
             self.laser_threshold,
@@ -1228,6 +1236,12 @@ class CircleTrackerGUI:
         self.preview_label = ttk.Label(right)
         self.preview_label.pack(fill=tk.BOTH, expand=True)
         ttk.Label(right, textvariable=self.status_text).pack(anchor=tk.W, pady=(6, 0))
+        ttk.Checkbutton(
+            right,
+            text="更加激进(关闭图像显示, 提升处理速度)",
+            variable=self.aggressive_perf_mode,
+            command=self._on_aggressive_perf_mode_toggle,
+        ).pack(anchor=tk.W, pady=(2, 0))
         self.status_log_widget = scrolledtext.ScrolledText(right, height=6, wrap=tk.WORD)
         self.status_log_widget.pack(fill=tk.X, pady=(4, 0))
         self.status_log_widget.configure(state=tk.DISABLED)
@@ -2403,93 +2417,82 @@ class CircleTrackerGUI:
             
             h, w = frame_rgb.shape[:2]
             center_x, center_y = w // 2, h // 2
-            
-            # 在 UI 线程中进行耗时的绘制和拼接
-            self._draw_overlay(
-                frame=frame_rgb,
-                center=(center_x, center_y),
-                detection=detection,
-                target=(int(round(target_x)), int(round(target_y))),
-                pred=(int(round(pred_x)), int(round(pred_y))),
-                radius=radius,
-                error=(error_x, error_y),
-                dt=dt,
-                bounds=bounds,
-                laser_spot=laser_spot_display,
-            )
-            
-            frame_rgb_disp = cv2.cvtColor(frame_rgb, cv2.COLOR_BGR2RGB)
-            if abs(error_x) <= deadband and abs(error_y) <= deadband and circle_found:
-                cv2.putText(frame_rgb_disp, "ALIGNMENT COMPLETE", (10, h - 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
-                if current_distance > 0:
-                    cv2.putText(frame_rgb_disp, f"{current_distance:.3f} m", (10, h - 70), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
-            
-            if self.show_debug_panels.get() and green_data is not None:
-                blurred_green, blurred_red, offset_x, offset_y, scale = green_data
-                
-                gh, gw = blurred_green.shape[:2]
-                orig_w = int(gw / scale)
-                orig_h = int(gh / scale)
-                
-                end_y = min(h, offset_y + orig_h)
-                end_x = min(w, offset_x + orig_w)
-                roi_h = end_y - offset_y
-                roi_w = end_x - offset_x
-                
-                full_green = np.zeros_like(frame_rgb_disp)
-                full_red = np.zeros_like(frame_rgb_disp)
-                
-                if roi_h > 0 and roi_w > 0:
-                    green_resized_single = cv2.resize(blurred_green, (orig_w, orig_h))
-                    red_resized_single = cv2.resize(blurred_red, (orig_w, orig_h))
-                    
-                    full_green[offset_y:end_y, offset_x:end_x, 1] = green_resized_single[:roi_h, :roi_w]
-                    full_red[offset_y:end_y, offset_x:end_x, 0] = red_resized_single[:roi_h, :roi_w]
-                
-                if detection is not None:
-                    x, y, r = detection
-                    x, y, r = int(round(x)), int(round(y)), int(round(r))
-                    cv2.circle(full_green, (x, y), 3, (255, 0, 0), -1)
-                    cv2.circle(full_green, (x, y), r, (255, 0, 0), 2)
-                    
-                if laser_spot_display is not None:
-                    lx, ly = int(round(laser_spot_display[0])), int(round(laser_spot_display[1]))
-                    cv2.line(full_green, (lx-10, ly), (lx+10, ly), (255, 255, 0), 2)
-                    cv2.line(full_green, (lx, ly-10), (lx, ly+10), (255, 255, 0), 2)
-                    cv2.putText(full_green, "Laser", (lx+10, ly-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
-                
-                cv2.putText(full_green, "Green Channel (Processed)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                cv2.putText(full_red, "Red Channel (Processed)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
-                
-                if self.laser_align_mode.get():
-                    _, binary = cv2.threshold(blurred_red, laser_threshold, 255, cv2.THRESH_BINARY)
-                    full_bin = np.zeros_like(frame_rgb_disp)
-                    bin_resized = cv2.resize(binary, (orig_w, orig_h))
-                    if roi_h > 0 and roi_w > 0:
-                        full_bin[offset_y:end_y, offset_x:end_x, 0] = bin_resized[:roi_h, :roi_w]
-                    
-                    if laser_locked:
-                        cv2.putText(full_bin, "Laser Binary Mask [LOCKED]", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                        # 同时在原图的右下角也写上锁定状态
-                        cv2.putText(frame_rgb_disp, "Laser: LOCKED", (w - 250, h - 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                    else:
-                        cv2.putText(full_bin, "Laser Binary Mask [SEARCHING]", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 165, 0), 2)
-                        cv2.putText(frame_rgb_disp, "Laser: SEARCHING", (w - 300, h - 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 165, 0), 2)
-                else:
-                    full_bin = np.zeros_like(frame_rgb_disp)
-                    cv2.putText(full_bin, "Laser Binary (Disabled)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (128, 128, 128), 2)
-                    cv2.putText(frame_rgb_disp, "Laser: BLIND ALIGN", (w - 320, h - 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (128, 128, 128), 2)
-                
-                top_row = np.hstack((frame_rgb_disp, full_green))
-                bottom_row = np.hstack((full_red, full_bin))
-                frame_rgb_show = np.vstack((top_row, bottom_row))
-            else:
-                frame_rgb_show = frame_rgb_disp
+            if not self.aggressive_perf_mode.get():
+                self._draw_overlay(
+                    frame=frame_rgb,
+                    center=(center_x, center_y),
+                    detection=detection,
+                    target=(int(round(target_x)), int(round(target_y))),
+                    pred=(int(round(pred_x)), int(round(pred_y))),
+                    radius=radius,
+                    error=(error_x, error_y),
+                    dt=dt,
+                    bounds=bounds,
+                    laser_spot=laser_spot_display,
+                )
+                frame_rgb_disp = cv2.cvtColor(frame_rgb, cv2.COLOR_BGR2RGB)
+                if abs(error_x) <= deadband and abs(error_y) <= deadband and circle_found:
+                    cv2.putText(frame_rgb_disp, "ALIGNMENT COMPLETE", (10, h - 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+                    if current_distance > 0:
+                        cv2.putText(frame_rgb_disp, f"{current_distance:.3f} m", (10, h - 70), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
 
-            image = Image.fromarray(frame_rgb_show)
-            photo = ImageTk.PhotoImage(image=image)
-            self.preview_label.configure(image=photo)
-            self.preview_label.image = photo
+                if self.show_debug_panels.get() and green_data is not None:
+                    blurred_green, blurred_red, offset_x, offset_y, scale = green_data
+                    gh, gw = blurred_green.shape[:2]
+                    orig_w = int(gw / scale)
+                    orig_h = int(gh / scale)
+                    end_y = min(h, offset_y + orig_h)
+                    end_x = min(w, offset_x + orig_w)
+                    roi_h = end_y - offset_y
+                    roi_w = end_x - offset_x
+                    full_green = np.zeros_like(frame_rgb_disp)
+                    full_red = np.zeros_like(frame_rgb_disp)
+                    if roi_h > 0 and roi_w > 0:
+                        green_resized_single = cv2.resize(blurred_green, (orig_w, orig_h))
+                        red_resized_single = cv2.resize(blurred_red, (orig_w, orig_h))
+                        full_green[offset_y:end_y, offset_x:end_x, 1] = green_resized_single[:roi_h, :roi_w]
+                        full_red[offset_y:end_y, offset_x:end_x, 0] = red_resized_single[:roi_h, :roi_w]
+                    if detection is not None:
+                        x, y, r = detection
+                        x, y, r = int(round(x)), int(round(y)), int(round(r))
+                        cv2.circle(full_green, (x, y), 3, (255, 0, 0), -1)
+                        cv2.circle(full_green, (x, y), r, (255, 0, 0), 2)
+                    if laser_spot_display is not None:
+                        lx, ly = int(round(laser_spot_display[0])), int(round(laser_spot_display[1]))
+                        cv2.line(full_green, (lx-10, ly), (lx+10, ly), (255, 255, 0), 2)
+                        cv2.line(full_green, (lx, ly-10), (lx, ly+10), (255, 255, 0), 2)
+                        cv2.putText(full_green, "Laser", (lx+10, ly-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
+                    cv2.putText(full_green, "Green Channel (Processed)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                    cv2.putText(full_red, "Red Channel (Processed)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+                    if self.laser_align_mode.get():
+                        _, binary = cv2.threshold(blurred_red, laser_threshold, 255, cv2.THRESH_BINARY)
+                        full_bin = np.zeros_like(frame_rgb_disp)
+                        bin_resized = cv2.resize(binary, (orig_w, orig_h))
+                        if roi_h > 0 and roi_w > 0:
+                            full_bin[offset_y:end_y, offset_x:end_x, 0] = bin_resized[:roi_h, :roi_w]
+                        if laser_locked:
+                            cv2.putText(full_bin, "Laser Binary Mask [LOCKED]", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                            cv2.putText(frame_rgb_disp, "Laser: LOCKED", (w - 250, h - 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                        else:
+                            cv2.putText(full_bin, "Laser Binary Mask [SEARCHING]", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 165, 0), 2)
+                            cv2.putText(frame_rgb_disp, "Laser: SEARCHING", (w - 300, h - 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 165, 0), 2)
+                    else:
+                        full_bin = np.zeros_like(frame_rgb_disp)
+                        cv2.putText(full_bin, "Laser Binary (Disabled)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (128, 128, 128), 2)
+                        cv2.putText(frame_rgb_disp, "Laser: BLIND ALIGN", (w - 320, h - 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (128, 128, 128), 2)
+                    top_row = np.hstack((frame_rgb_disp, full_green))
+                    bottom_row = np.hstack((full_red, full_bin))
+                    frame_rgb_show = np.vstack((top_row, bottom_row))
+                else:
+                    frame_rgb_show = frame_rgb_disp
+
+                image = Image.fromarray(frame_rgb_show)
+                photo = ImageTk.PhotoImage(image=image)
+                self.preview_label.configure(image=photo, text="")
+                self.preview_label.image = photo
+            else:
+                self.preview_label.configure(image="", text="AGGRESSIVE MODE")
+                self.preview_label.image = None
             
             # 计算真实相机FPS
             current_time = time.time()
@@ -2716,6 +2719,16 @@ class CircleTrackerGUI:
         self.imu_status_pitch_delta.set("+0.00")
         self.imu_status_yaw_delta.set("+0.00")
         self.status_text.set("IMU已置零(平均)")
+
+    def _on_aggressive_perf_mode_toggle(self):
+        if self.aggressive_perf_mode.get():
+            self.show_debug_panels.set(False)
+            self.preview_label.configure(image="", text="AGGRESSIVE MODE")
+            self.preview_label.image = None
+            self.status_text.set("已开启更加激进模式：关闭图像显示")
+        else:
+            self.preview_label.configure(text="")
+            self.status_text.set("已关闭更加激进模式")
 
     def _apply_camera_resolution(self):
         try:
