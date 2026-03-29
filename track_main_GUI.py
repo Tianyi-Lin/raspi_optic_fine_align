@@ -213,7 +213,7 @@ def _vision_process_main(stop_event, settings_queue, status_queue, latest_det):
         pass
 
 
-def _control_process_main(stop_event, settings_queue, status_queue, latest_det):
+def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, latest_det):
     _set_current_process_affinity("3")
     settings = {
         "core_control": "3",
@@ -280,6 +280,26 @@ def _control_process_main(stop_event, settings_queue, status_queue, latest_det):
     last_ts = time.time()
     last_push = 0.0
     while not stop_event.is_set():
+        try:
+            while True:
+                cmd = cmd_queue.get_nowait()
+                if isinstance(cmd, tuple) and len(cmd) >= 1:
+                    if cmd[0] == "recenter":
+                        current_pan = 0.0
+                        current_tilt = 0.0
+                        pid_x.reset()
+                        pid_y.reset()
+                        stab_pan_filtered = 0.0
+                        stab_tilt_filtered = 0.0
+                    elif cmd[0] == "zero_imu":
+                        imu_zero_pitch = float(cmd[1]) if len(cmd) > 1 else 0.0
+                        imu_zero_yaw = float(cmd[2]) if len(cmd) > 2 else 0.0
+                    elif cmd[0] == "jog":
+                        if len(cmd) >= 3:
+                            current_pan += float(cmd[1])
+                            current_tilt += float(cmd[2])
+        except Exception:
+            pass
         try:
             while True:
                 msg = settings_queue.get_nowait()
@@ -751,6 +771,7 @@ class CircleTrackerGUI:
         self.mp_stop_event = None
         self.mp_vision_settings_queue = None
         self.mp_control_settings_queue = None
+        self.mp_control_cmd_queue = None
         self.mp_status_queue = None
         self.mp_latest_detection = None
         self.mp_vision_proc = None
@@ -2354,6 +2375,7 @@ class CircleTrackerGUI:
         self.mp_stop_event = self.mp_ctx.Event()
         self.mp_vision_settings_queue = self.mp_ctx.Queue(maxsize=4)
         self.mp_control_settings_queue = self.mp_ctx.Queue(maxsize=4)
+        self.mp_control_cmd_queue = self.mp_ctx.Queue(maxsize=16)
         self.mp_status_queue = self.mp_ctx.Queue(maxsize=32)
         self.mp_latest_detection = self.mp_ctx.Array("d", [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
         self.mp_vision_proc = self.mp_ctx.Process(
@@ -2363,7 +2385,7 @@ class CircleTrackerGUI:
         )
         self.mp_control_proc = self.mp_ctx.Process(
             target=_control_process_main,
-            args=(self.mp_stop_event, self.mp_control_settings_queue, self.mp_status_queue, self.mp_latest_detection),
+            args=(self.mp_stop_event, self.mp_control_settings_queue, self.mp_control_cmd_queue, self.mp_status_queue, self.mp_latest_detection),
             daemon=True,
         )
         self.mp_vision_proc.start()
@@ -2398,6 +2420,7 @@ class CircleTrackerGUI:
         self.mp_stop_event = None
         self.mp_vision_settings_queue = None
         self.mp_control_settings_queue = None
+        self.mp_control_cmd_queue = None
         self.mp_status_queue = None
         self.mp_latest_detection = None
 
@@ -2473,11 +2496,16 @@ class CircleTrackerGUI:
         self.pid_x.reset()
         self.pid_y.reset()
         self.kalman = Kalman2D()
+        if self.multiprocess_mode.get() and self.mp_control_cmd_queue is not None:
+            try:
+                self.mp_control_cmd_queue.put_nowait(("recenter",))
+            except Exception:
+                pass
         with self.detect_lock:
             self.latest_detection = None
             self.latest_detection_time = 0.0
-        # 复位时强制回正
-        self._center_servos()
+        if not self.multiprocess_mode.get():
+            self._center_servos()
         
     def _center_servos(self):
         """将舵机回正到0度"""
@@ -3098,6 +3126,12 @@ class CircleTrackerGUI:
             return
         if self.multiprocess_mode.get():
             self._push_multiprocess_settings()
+            vision_alive = bool(self.mp_vision_proc is not None and self.mp_vision_proc.is_alive())
+            control_alive = bool(self.mp_control_proc is not None and self.mp_control_proc.is_alive())
+            if not vision_alive:
+                self.worker_error = "视觉进程已退出"
+            if not control_alive:
+                self.worker_error = "控制进程已退出"
             try:
                 while True:
                     key, val = self.mp_status_queue.get_nowait()
@@ -3129,7 +3163,7 @@ class CircleTrackerGUI:
             if self.mp_latest_detection is not None and self.mp_latest_detection[5] > 0.5:
                 self.mp_det_age = max(0.0, time.time() - float(self.mp_latest_detection[4]))
             self.status_text.set(
-                f"多进程重构中 视觉Hz={self.mp_vision_hz:.1f} 控制Hz={self.mp_control_hz:.1f} 检测Age={self.mp_det_age:.3f}s 水平={self.mp_pan:.2f} 俯仰={self.mp_tilt:.2f}"
+                f"多进程重构中 V={int(vision_alive)} C={int(control_alive)} 视觉Hz={self.mp_vision_hz:.1f} 控制Hz={self.mp_control_hz:.1f} 检测Age={self.mp_det_age:.3f}s 水平={self.mp_pan:.2f} 俯仰={self.mp_tilt:.2f}"
             )
             self.after_id = self.root.after(80, self._ui_loop)
             return
@@ -4063,6 +4097,15 @@ class CircleTrackerGUI:
         self.root.destroy()
 
     def _jog(self, delta_pan, delta_tilt):
+        if self.multiprocess_mode.get():
+            if self.mp_control_cmd_queue is not None:
+                try:
+                    self.mp_control_cmd_queue.put_nowait(("jog", float(delta_pan), float(delta_tilt)))
+                    self.status_text.set(f"多进程点动: pan={float(delta_pan):+.2f} tilt={float(delta_tilt):+.2f}")
+                except Exception as exc:
+                    self.worker_error = str(exc)
+                    self.status_text.set(f"点动命令失败: {exc}")
+            return
         if self.servo is None:
             try:
                 self._ensure_servo()
