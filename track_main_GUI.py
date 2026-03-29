@@ -1217,6 +1217,11 @@ class CircleTrackerGUI:
         self._startup_hardware_prep_async()
 
     def _startup_hardware_prep_async(self):
+        mp_mode = False
+        try:
+            mp_mode = bool(self.multiprocess_mode.get())
+        except Exception:
+            mp_mode = False
         def _worker():
             try:
                 try:
@@ -1236,23 +1241,24 @@ class CircleTrackerGUI:
                 except Exception as exc:
                     print(f"[WARNING] Laser configure failed: {exc}")
                 time.sleep(1.0)
-                try:
-                    fallback_mode = "无刷RS485"
+                if not mp_mode:
                     try:
-                        self.root.after(0, lambda: self.servo_mode.set(fallback_mode))
-                    except Exception:
-                        self.servo_mode.set(fallback_mode)
-                    self._ensure_servo()
-                    try:
-                        self._ensure_imu()
-                        self._zero_imu()
+                        fallback_mode = "无刷RS485"
+                        try:
+                            self.root.after(0, lambda: self.servo_mode.set(fallback_mode))
+                        except Exception:
+                            self.servo_mode.set(fallback_mode)
+                        self._ensure_servo()
+                        try:
+                            self._ensure_imu()
+                            self._zero_imu()
+                        except Exception as exc:
+                            print(f"[WARNING] IMU init/zero failed before start: {exc}")
                     except Exception as exc:
-                        print(f"[WARNING] IMU init/zero failed before start: {exc}")
-                except Exception as exc:
-                    import traceback
+                        import traceback
 
-                    traceback.print_exc()
-                    print(f"[WARNING] Servo init failed before start: {exc}")
+                        traceback.print_exc()
+                        print(f"[WARNING] Servo init failed before start: {exc}")
                 time.sleep(1.0)
                 try:
                     self.laser_ranger = LaserRangerQueryMonitor(
