@@ -1241,6 +1241,61 @@ class CircleTrackerGUI:
         hz = max(1, hz)
         return max(5, int(round(1000.0 / float(hz))))
 
+    def _make_scrollable_tab(self, parent):
+        container = ttk.Frame(parent)
+        container.pack(fill=tk.BOTH, expand=True)
+        canvas = tk.Canvas(container, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(container, orient=tk.VERTICAL, command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        inner = ttk.Frame(canvas, padding=8)
+        window_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+        def _on_inner_configure(_event):
+            try:
+                canvas.configure(scrollregion=canvas.bbox("all"))
+            except Exception:
+                pass
+
+        def _on_canvas_configure(event):
+            try:
+                canvas.itemconfigure(window_id, width=int(event.width))
+            except Exception:
+                pass
+
+        def _on_mousewheel(event):
+            try:
+                delta = int(getattr(event, "delta", 0))
+                if delta == 0:
+                    return
+                if abs(delta) < 120:
+                    step = -1 if delta > 0 else 1
+                else:
+                    step = int(-delta / 120)
+                canvas.yview_scroll(step, "units")
+            except Exception:
+                pass
+
+        def _on_button4(_event):
+            try:
+                canvas.yview_scroll(-1, "units")
+            except Exception:
+                pass
+
+        def _on_button5(_event):
+            try:
+                canvas.yview_scroll(1, "units")
+            except Exception:
+                pass
+
+        inner.bind("<Configure>", _on_inner_configure)
+        canvas.bind("<Configure>", _on_canvas_configure)
+        canvas.bind("<MouseWheel>", _on_mousewheel)
+        canvas.bind("<Button-4>", _on_button4)
+        canvas.bind("<Button-5>", _on_button5)
+        return inner
+
     def _release_local_hardware_handles(self):
         if self.servo is not None:
             try:
@@ -2125,14 +2180,18 @@ class CircleTrackerGUI:
         notebook = ttk.Notebook(left)
         notebook.pack(fill=tk.BOTH, expand=True)
 
-        tab_basic = ttk.Frame(notebook, padding=8)
-        tab_pid = ttk.Frame(notebook, padding=8)
-        tab_vision = ttk.Frame(notebook, padding=8)
-        tab_camera = ttk.Frame(notebook, padding=8)
+        tab_basic = ttk.Frame(notebook)
+        tab_pid = ttk.Frame(notebook)
+        tab_vision = ttk.Frame(notebook)
+        tab_camera = ttk.Frame(notebook)
         notebook.add(tab_basic, text="基本")
         notebook.add(tab_pid, text="PID")
         notebook.add(tab_vision, text="视觉")
         notebook.add(tab_camera, text="相机")
+        tab_basic = self._make_scrollable_tab(tab_basic)
+        tab_pid = self._make_scrollable_tab(tab_pid)
+        tab_vision = self._make_scrollable_tab(tab_vision)
+        tab_camera = self._make_scrollable_tab(tab_camera)
 
         tab_basic.columnconfigure(1, weight=1)
         tab_basic.columnconfigure(3, weight=1)
@@ -3576,51 +3635,61 @@ class CircleTrackerGUI:
 
                 if self.show_debug_panels.get() and green_data is not None:
                     blurred_green, blurred_red, offset_x, offset_y, scale = green_data
-                    gh, gw = blurred_green.shape[:2]
-                    orig_w = int(gw / scale)
-                    orig_h = int(gh / scale)
-                    end_y = min(h, offset_y + orig_h)
-                    end_x = min(w, offset_x + orig_w)
-                    roi_h = end_y - offset_y
-                    roi_w = end_x - offset_x
-                    full_green = np.zeros_like(frame_rgb_disp)
-                    full_red = np.zeros_like(frame_rgb_disp)
-                    if roi_h > 0 and roi_w > 0:
-                        green_resized_single = cv2.resize(blurred_green, (orig_w, orig_h))
-                        red_resized_single = cv2.resize(blurred_red, (orig_w, orig_h))
-                        full_green[offset_y:end_y, offset_x:end_x, 1] = green_resized_single[:roi_h, :roi_w]
-                        full_red[offset_y:end_y, offset_x:end_x, 0] = red_resized_single[:roi_h, :roi_w]
-                    if detection is not None:
-                        x, y, r = detection
-                        x, y, r = int(round(x)), int(round(y)), int(round(r))
-                        cv2.circle(full_green, (x, y), 3, (255, 0, 0), -1)
-                        cv2.circle(full_green, (x, y), r, (255, 0, 0), 2)
-                    if laser_spot_display is not None:
-                        lx, ly = int(round(laser_spot_display[0])), int(round(laser_spot_display[1]))
-                        cv2.line(full_green, (lx-10, ly), (lx+10, ly), (255, 255, 0), 2)
-                        cv2.line(full_green, (lx, ly-10), (lx, ly+10), (255, 255, 0), 2)
-                        cv2.putText(full_green, "Laser", (lx+10, ly-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
-                    cv2.putText(full_green, "Green Channel (Processed)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                    cv2.putText(full_red, "Red Channel (Processed)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+                    box = getattr(self, "_preview_box_size", None)
+                    if box is None:
+                        target_w, target_h = w, h
+                    else:
+                        target_w, target_h = int(box[0]), int(box[1])
+                    target_w = max(160, target_w)
+                    target_h = max(120, target_h)
+                    panel_w = max(80, target_w // 2)
+                    panel_h = max(60, target_h // 2)
+                    sx = panel_w / float(w)
+                    sy = panel_h / float(h)
+
+                    main_panel = cv2.resize(frame_rgb_disp, (panel_w, panel_h), interpolation=cv2.INTER_AREA)
+
+                    green_gray = cv2.resize(blurred_green, (panel_w, panel_h), interpolation=cv2.INTER_AREA)
+                    red_gray = cv2.resize(blurred_red, (panel_w, panel_h), interpolation=cv2.INTER_AREA)
+                    green_panel = np.zeros((panel_h, panel_w, 3), dtype=np.uint8)
+                    red_panel = np.zeros((panel_h, panel_w, 3), dtype=np.uint8)
+                    green_panel[:, :, 1] = green_gray
+                    red_panel[:, :, 0] = red_gray
+
                     if self.laser_align_mode.get():
                         _, binary = cv2.threshold(blurred_red, laser_threshold, 255, cv2.THRESH_BINARY)
-                        full_bin = np.zeros_like(frame_rgb_disp)
-                        bin_resized = cv2.resize(binary, (orig_w, orig_h))
-                        if roi_h > 0 and roi_w > 0:
-                            full_bin[offset_y:end_y, offset_x:end_x, 0] = bin_resized[:roi_h, :roi_w]
-                        if laser_locked:
-                            cv2.putText(full_bin, "Laser Binary Mask [LOCKED]", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                            cv2.putText(frame_rgb_disp, "Laser: LOCKED", (w - 250, h - 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                        else:
-                            cv2.putText(full_bin, "Laser Binary Mask [SEARCHING]", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 165, 0), 2)
-                            cv2.putText(frame_rgb_disp, "Laser: SEARCHING", (w - 300, h - 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 165, 0), 2)
+                        bin_gray = cv2.resize(binary, (panel_w, panel_h), interpolation=cv2.INTER_NEAREST)
+                        bin_panel = cv2.cvtColor(bin_gray, cv2.COLOR_GRAY2RGB)
                     else:
-                        full_bin = np.zeros_like(frame_rgb_disp)
-                        cv2.putText(full_bin, "Laser Binary (Disabled)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (128, 128, 128), 2)
-                        cv2.putText(frame_rgb_disp, "Laser: BLIND ALIGN", (w - 320, h - 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (128, 128, 128), 2)
-                    top_row = np.hstack((frame_rgb_disp, full_green))
-                    bottom_row = np.hstack((full_red, full_bin))
+                        bin_panel = np.zeros((panel_h, panel_w, 3), dtype=np.uint8)
+
+                    if detection is not None:
+                        x, y, r = detection
+                        x, y, r = int(round(x * sx)), int(round(y * sy)), int(round(r * (sx + sy) * 0.5))
+                        cv2.circle(main_panel, (x, y), 3, (0, 255, 0), -1)
+                        cv2.circle(main_panel, (x, y), max(1, r), (255, 0, 0), 2)
+                        cv2.circle(green_panel, (x, y), 3, (255, 0, 0), -1)
+                        cv2.circle(red_panel, (x, y), 3, (255, 255, 255), -1)
+
+                    if laser_spot_display is not None:
+                        lx, ly = int(round(laser_spot_display[0] * sx)), int(round(laser_spot_display[1] * sy))
+                        cv2.line(main_panel, (lx - 10, ly), (lx + 10, ly), (255, 255, 0), 2)
+                        cv2.line(main_panel, (lx, ly - 10), (lx, ly + 10), (255, 255, 0), 2)
+                        cv2.line(green_panel, (lx - 10, ly), (lx + 10, ly), (255, 255, 0), 2)
+                        cv2.line(green_panel, (lx, ly - 10), (lx, ly + 10), (255, 255, 0), 2)
+                        cv2.line(red_panel, (lx - 10, ly), (lx + 10, ly), (255, 255, 0), 2)
+                        cv2.line(red_panel, (lx, ly - 10), (lx, ly + 10), (255, 255, 0), 2)
+
+                    cv2.putText(main_panel, "Main", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
+                    cv2.putText(green_panel, "Green", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+                    cv2.putText(red_panel, "Red", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 0, 0), 2)
+                    cv2.putText(bin_panel, "Laser Bin" if self.laser_align_mode.get() else "Bin Off", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (200, 200, 200), 2)
+
+                    top_row = np.hstack((main_panel, green_panel))
+                    bottom_row = np.hstack((red_panel, bin_panel))
                     frame_rgb_show = np.vstack((top_row, bottom_row))
+                    if frame_rgb_show.shape[1] != target_w or frame_rgb_show.shape[0] != target_h:
+                        frame_rgb_show = cv2.resize(frame_rgb_show, (target_w, target_h), interpolation=cv2.INTER_AREA)
                 else:
                     frame_rgb_show = frame_rgb_disp
 
@@ -4441,6 +4510,8 @@ class CircleTrackerGUI:
             return img_rgb
         ih, iw = img_rgb.shape[:2]
         if iw <= 0 or ih <= 0:
+            return img_rgb
+        if iw == box_w and ih == box_h:
             return img_rgb
         scale = min(box_w / float(iw), box_h / float(ih))
         new_w = max(1, int(round(iw * scale)))
