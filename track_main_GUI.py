@@ -351,6 +351,10 @@ class CircleTrackerGUI:
         self.x_bias = tk.IntVar(value=0)
         self.y_bias = tk.IntVar(value=0)
         self.camera_fps = tk.IntVar(value=60)
+        self.camera_raw_width = tk.IntVar(value=640)
+        self.camera_raw_height = tk.IntVar(value=640)
+        self.hough_crop_width = tk.IntVar(value=640)
+        self.hough_crop_height = tk.IntVar(value=640)
         self.image_rotate_deg = tk.DoubleVar(value=0.0)
         self.status_text = tk.StringVar(value="就绪")
         self.status_log_widget = None
@@ -523,6 +527,10 @@ class CircleTrackerGUI:
             "x_bias": 0,
             "y_bias": 0,
             "camera_fps": 60,
+            "camera_raw_width": 640,
+            "camera_raw_height": 640,
+            "hough_crop_width": 640,
+            "hough_crop_height": 640,
             "image_rotate_deg": 0.0,
             "show_debug_panels": False,
             "laser_align_mode": False,
@@ -640,6 +648,10 @@ class CircleTrackerGUI:
                 "x_bias": safe_int(self.x_bias, "x_bias"),
                 "y_bias": safe_int(self.y_bias, "y_bias"),
                 "camera_fps": safe_int(self.camera_fps, "camera_fps"),
+                "camera_raw_width": safe_int(self.camera_raw_width, "camera_raw_width"),
+                "camera_raw_height": safe_int(self.camera_raw_height, "camera_raw_height"),
+                "hough_crop_width": safe_int(self.hough_crop_width, "hough_crop_width"),
+                "hough_crop_height": safe_int(self.hough_crop_height, "hough_crop_height"),
                 "image_rotate_deg": safe_float(self.image_rotate_deg, "image_rotate_deg"),
                 "show_debug_panels": safe_bool(self.show_debug_panels),
                 "laser_align_mode": safe_bool(self.laser_align_mode),
@@ -725,6 +737,10 @@ class CircleTrackerGUI:
             "max_radius": 120,
             "x_bias": 0,
             "y_bias": 0,
+            "camera_raw_width": 640,
+            "camera_raw_height": 640,
+            "hough_crop_width": 640,
+            "hough_crop_height": 640,
             "image_rotate_deg": 0.0,
             "show_debug_panels": False,
             "pan_min": -180.0,
@@ -822,6 +838,10 @@ class CircleTrackerGUI:
             "x_bias": safe_int(self.x_bias, "x_bias"),
             "y_bias": safe_int(self.y_bias, "y_bias"),
             "camera_fps": safe_int(self.camera_fps, "camera_fps"),
+            "camera_raw_width": safe_int(self.camera_raw_width, "camera_raw_width"),
+            "camera_raw_height": safe_int(self.camera_raw_height, "camera_raw_height"),
+            "hough_crop_width": safe_int(self.hough_crop_width, "hough_crop_width"),
+            "hough_crop_height": safe_int(self.hough_crop_height, "hough_crop_height"),
             "image_rotate_deg": safe_float(self.image_rotate_deg, "image_rotate_deg"),
             "show_debug_panels": safe_bool(self.show_debug_panels, "show_debug_panels"),
             "laser_align_mode": safe_bool(self.laser_align_mode, "laser_align_mode"),
@@ -921,6 +941,10 @@ class CircleTrackerGUI:
             "max_radius": self.max_radius,
             "x_bias": self.x_bias,
             "y_bias": self.y_bias,
+            "camera_raw_width": self.camera_raw_width,
+            "camera_raw_height": self.camera_raw_height,
+            "hough_crop_width": self.hough_crop_width,
+            "hough_crop_height": self.hough_crop_height,
             "image_rotate_deg": self.image_rotate_deg,
             "show_debug_panels": self.show_debug_panels,
             "pan_min": self.pan_min,
@@ -1022,6 +1046,10 @@ class CircleTrackerGUI:
                 "x_bias": int(self.x_bias.get()),
                 "y_bias": int(self.y_bias.get()),
                 "camera_fps": int(self.camera_fps.get()),
+                "camera_raw_width": int(self.camera_raw_width.get()),
+                "camera_raw_height": int(self.camera_raw_height.get()),
+                "hough_crop_width": int(self.hough_crop_width.get()),
+                "hough_crop_height": int(self.hough_crop_height.get()),
                 "image_rotate_deg": float(self.image_rotate_deg.get()),
                 "show_debug_panels": bool(self.show_debug_panels.get()),
                 "laser_align_mode": bool(self.laser_align_mode.get()),
@@ -1125,6 +1153,10 @@ class CircleTrackerGUI:
             self.max_radius,
             self.x_bias,
             self.y_bias,
+            self.camera_raw_width,
+            self.camera_raw_height,
+            self.hough_crop_width,
+            self.hough_crop_height,
             self.image_rotate_deg,
             self.show_debug_panels,
             self.camera_fps,
@@ -1469,6 +1501,10 @@ class CircleTrackerGUI:
             left_vis.columnconfigure(c, weight=1)
             right_vis.columnconfigure(c, weight=1)
         rv = 0
+        self._grid_entry(left_vis, rv, 0, "识别裁切宽", self.hough_crop_width, width=8)
+        rv += 1
+        self._grid_entry(left_vis, rv, 0, "识别裁切高", self.hough_crop_height, width=8)
+        rv += 1
         rv = self._grid_slider(left_vis, rv, 0, "最小间距", self.min_dist, 10, 300)
         rv = self._grid_slider(left_vis, rv, 0, "参数1", self.param1, 50, 500)
         rv = self._grid_slider(left_vis, rv, 0, "参数2", self.param2, 5, 200)
@@ -1502,6 +1538,10 @@ class CircleTrackerGUI:
         cam.pack(fill=tk.BOTH, expand=True)
         cam.columnconfigure(0, weight=1)
         rc = 0
+        self._grid_entry(cam, rc, 0, "采集宽度", self.camera_raw_width, width=10)
+        rc += 1
+        self._grid_entry(cam, rc, 0, "采集高度", self.camera_raw_height, width=10)
+        rc += 1
         rc = self._grid_slider(cam, rc, 0, "相机FPS", self.camera_fps, 10, 120)
         rotate_frame = ttk.Frame(cam)
         rotate_frame.grid(row=rc, column=0, sticky="ew", pady=(2, 6))
@@ -1745,6 +1785,20 @@ class CircleTrackerGUI:
                     continue
 
                 s = self._get_settings()
+                desired_w = max(160, int(s.get("camera_raw_width", 640)))
+                desired_h = max(120, int(s.get("camera_raw_height", 640)))
+                if getattr(self, "camera_raw_size", None) != (desired_w, desired_h):
+                    try:
+                        if self.picam2 is not None:
+                            self.picam2.stop()
+                            self.picam2.close()
+                            self.picam2 = None
+                        self._ensure_camera()
+                    except Exception as exc:
+                        self.worker_error = str(exc)
+                        self.stop_event.set()
+                        break
+                    continue
                 self._sync_camera_controls(s["ae_enable"], s["exposure"], s["gain"], s["camera_fps"])
 
                 frame_rgb = self.picam2.capture_array()
@@ -2202,21 +2256,35 @@ class CircleTrackerGUI:
                     time.sleep(0.002)
                     continue
                 frame_rgb, s = frame_bundle
+                h_full, w_full = frame_rgb.shape[:2]
+                crop_w = max(0, int(s.get("hough_crop_width", w_full)))
+                crop_h = max(0, int(s.get("hough_crop_height", h_full)))
+                if crop_w <= 0:
+                    crop_w = w_full
+                if crop_h <= 0:
+                    crop_h = h_full
+                crop_w = min(crop_w, w_full)
+                crop_h = min(crop_h, h_full)
+                crop_x0 = (w_full - crop_w) // 2
+                crop_y0 = (h_full - crop_h) // 2
+                frame_for_detect = frame_rgb[crop_y0:crop_y0 + crop_h, crop_x0:crop_x0 + crop_w]
                 roi = None
                 with self.detect_lock:
                     last_det = self.latest_detection
                     last_det_time = self.latest_detection_time
                 if last_det is not None and (time.time() - last_det_time) <= self.detect_stale_sec:
-                    h, w = frame_rgb.shape[:2]
+                    h, w = frame_for_detect.shape[:2]
                     margin = max(80, int(last_det[2] * 2.5))
-                    x0 = max(0, int(last_det[0] - margin))
-                    y0 = max(0, int(last_det[1] - margin))
-                    x1 = min(w, int(last_det[0] + margin))
-                    y1 = min(h, int(last_det[1] + margin))
+                    det_x = int(last_det[0] - crop_x0)
+                    det_y = int(last_det[1] - crop_y0)
+                    x0 = max(0, int(det_x - margin))
+                    y0 = max(0, int(det_y - margin))
+                    x1 = min(w, int(det_x + margin))
+                    y1 = min(h, int(det_y + margin))
                     if x1 - x0 >= 20 and y1 - y0 >= 20:
                         roi = (x0, y0, x1, y1)
                 detection, blurred_green, blurred_red, offset_x, offset_y, scale = self._detect_circle(
-                    frame_rgb,
+                    frame_for_detect,
                     ksize=s["ksize"],
                     min_dist=s["min_dist"],
                     param1=s["param1"],
@@ -2225,6 +2293,8 @@ class CircleTrackerGUI:
                     max_radius=s["max_radius"],
                     roi=roi,
                 )
+                if detection is not None:
+                    detection = (detection[0] + crop_x0, detection[1] + crop_y0, detection[2])
                 
                 # 应用EMA低通滤波稳定检测结果
                 if detection is not None:
@@ -2243,7 +2313,7 @@ class CircleTrackerGUI:
                 with self.detect_lock:
                     self.latest_detection = detection_to_save
                     self.latest_detection_time = time.time()
-                    self.latest_green_channel = (blurred_green, blurred_red, offset_x, offset_y, scale)
+                    self.latest_green_channel = (blurred_green, blurred_red, offset_x + crop_x0, offset_y + crop_y0, scale)
                     last_processed_id = frame_id
         except Exception as exc:
             import traceback
@@ -2496,12 +2566,14 @@ class CircleTrackerGUI:
         self.picam2 = Picamera2()
         self.picam2.start_preview(Preview.NULL)
         framerate = settings.get("camera_fps", 60)
+        raw_w = max(160, int(settings.get("camera_raw_width", 640)))
+        raw_h = max(120, int(settings.get("camera_raw_height", 640)))
         frame_duration = int(1000000 / framerate)
         config = self.picam2.create_video_configuration(
             controls={"FrameDurationLimits": (frame_duration, frame_duration)}
         )
         config["main"]["format"] = "RGB888"
-        config["main"]["size"] = (640, 640)
+        config["main"]["size"] = (raw_w, raw_h)
         self.picam2.align_configuration(config)
         self.picam2.configure(config)
         self.picam2.start()
@@ -2510,6 +2582,7 @@ class CircleTrackerGUI:
         self.last_exposure = None
         self.last_gain = None
         self.last_fps = framerate
+        self.camera_raw_size = (raw_w, raw_h)
 
     @staticmethod
     def _angle_diff_deg(a, b):
