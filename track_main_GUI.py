@@ -333,8 +333,9 @@ class CircleTrackerGUI:
         self.core_affinity_enabled = tk.BooleanVar(value=False)
         self.core_ui = tk.IntVar(value=0)
         self.core_control = tk.IntVar(value=1)
-        self.core_vision = tk.IntVar(value=2)
+        self.core_vision = tk.StringVar(value="2")
         self.core_stabilize = tk.IntVar(value=3)
+        self.core_layout_preset = tk.StringVar(value="标准版(UI0 视1-2 控3)")
         self.track_enabled = tk.BooleanVar(value=True)
         self.pan_enabled = tk.BooleanVar(value=True)
         self.tilt_enabled = tk.BooleanVar(value=True)
@@ -524,7 +525,7 @@ class CircleTrackerGUI:
             "core_affinity_enabled": False,
             "core_ui": 0,
             "core_control": 1,
-            "core_vision": 2,
+            "core_vision": "2",
             "core_stabilize": 3,
             "kp_x": 0.0075,
             "ki_x": 0.025,
@@ -649,7 +650,7 @@ class CircleTrackerGUI:
                 "core_affinity_enabled": safe_bool(self.core_affinity_enabled),
                 "core_ui": safe_int(self.core_ui, "core_ui"),
                 "core_control": safe_int(self.core_control, "core_control"),
-                "core_vision": safe_int(self.core_vision, "core_vision"),
+                "core_vision": str(self.core_vision.get()).strip() if str(self.core_vision.get()).strip() else str(defaults["core_vision"]),
                 "core_stabilize": safe_int(self.core_stabilize, "core_stabilize"),
                 "track_enabled": safe_bool(self.track_enabled),
                 "pan_enabled": safe_bool(self.pan_enabled),
@@ -747,7 +748,7 @@ class CircleTrackerGUI:
             "core_affinity_enabled": False,
             "core_ui": 0,
             "core_control": 1,
-            "core_vision": 2,
+            "core_vision": "2",
             "core_stabilize": 3,
             "track_enabled": True,
             "pan_enabled": True,
@@ -855,7 +856,7 @@ class CircleTrackerGUI:
             "core_affinity_enabled": safe_bool(self.core_affinity_enabled, "core_affinity_enabled"),
             "core_ui": safe_int(self.core_ui, "core_ui"),
             "core_control": safe_int(self.core_control, "core_control"),
-            "core_vision": safe_int(self.core_vision, "core_vision"),
+            "core_vision": str(self.core_vision.get()).strip() if str(self.core_vision.get()).strip() else str(defaults["core_vision"]),
             "core_stabilize": safe_int(self.core_stabilize, "core_stabilize"),
             "track_enabled": safe_bool(self.track_enabled, "track_enabled"),
             "pan_enabled": safe_bool(self.pan_enabled, "pan_enabled"),
@@ -1079,7 +1080,7 @@ class CircleTrackerGUI:
                 "core_affinity_enabled": bool(self.core_affinity_enabled.get()),
                 "core_ui": int(self.core_ui.get()),
                 "core_control": int(self.core_control.get()),
-                "core_vision": int(self.core_vision.get()),
+                "core_vision": str(self.core_vision.get()).strip(),
                 "core_stabilize": int(self.core_stabilize.get()),
                 "track_enabled": bool(self.track_enabled.get()),
                 "pan_enabled": bool(self.pan_enabled.get()),
@@ -1333,8 +1334,17 @@ class CircleTrackerGUI:
         ttk.Checkbutton(tab_basic, text="绑定CPU核心", variable=self.core_affinity_enabled).grid(row=r, column=0, sticky="w", pady=(2, 2))
         self._grid_entry(tab_basic, r, 2, "UI核", self.core_ui, width=6)
         r += 1
+        ttk.Combobox(
+            tab_basic,
+            textvariable=self.core_layout_preset,
+            values=("标准版(UI0 视1-2 控3)", "更稳版(UI0 视1-2 控3 稳3)"),
+            state="readonly",
+            width=28,
+        ).grid(row=r, column=0, columnspan=2, sticky="w", pady=(2, 2))
+        ttk.Button(tab_basic, text="应用核预设", command=self._apply_core_layout_preset).grid(row=r, column=2, columnspan=2, sticky="w", pady=(2, 2))
+        r += 1
         self._grid_entry(tab_basic, r, 0, "控制核", self.core_control, width=6)
-        self._grid_entry(tab_basic, r, 2, "视觉核", self.core_vision, width=6)
+        self._grid_entry(tab_basic, r, 2, "视觉核(可1,2)", self.core_vision, width=8)
         r += 1
         self._grid_entry(tab_basic, r, 0, "稳定核", self.core_stabilize, width=6)
         r += 1
@@ -1772,12 +1782,49 @@ class CircleTrackerGUI:
                 return False
             if not hasattr(os, "sched_setaffinity"):
                 return False
-            core = max(0, int(core_index))
+            if isinstance(core_index, str):
+                spec = core_index.strip()
+            else:
+                spec = str(core_index).strip()
+            if not spec:
+                return False
+            cores = set()
+            for part in spec.split(","):
+                p = part.strip()
+                if not p:
+                    continue
+                if "-" in p:
+                    a, b = p.split("-", 1)
+                    start = max(0, int(a))
+                    end = max(0, int(b))
+                    if end < start:
+                        start, end = end, start
+                    cores.update(range(start, end + 1))
+                else:
+                    cores.add(max(0, int(p)))
+            if not cores:
+                return False
             tid = threading.get_native_id() if hasattr(threading, "get_native_id") else os.getpid()
-            os.sched_setaffinity(tid, {core})
+            os.sched_setaffinity(tid, cores)
             return True
         except Exception:
             return False
+
+    def _apply_core_layout_preset(self):
+        p = self.core_layout_preset.get()
+        if p == "标准版(UI0 视1-2 控3)":
+            self.core_affinity_enabled.set(True)
+            self.core_ui.set(0)
+            self.core_control.set(3)
+            self.core_vision.set("1,2")
+            self.core_stabilize.set(3)
+        elif p == "更稳版(UI0 视1-2 控3 稳3)":
+            self.core_affinity_enabled.set(True)
+            self.core_ui.set(0)
+            self.core_control.set(3)
+            self.core_vision.set("1,2")
+            self.core_stabilize.set(3)
+        self.status_text.set("已应用CPU核预设")
 
     def _start_runtime(self):
         if self.running:
@@ -1800,7 +1847,7 @@ class CircleTrackerGUI:
             self.stab_thread = threading.Thread(target=self._stabilization_loop, daemon=True)
             self.stab_thread.start()
             self.after_id = self.root.after(30, self._ui_loop)
-            self.status_text.set("检测中（未跟踪）")
+            self.status_text.set("检测中（未跟踪，识别→控制为最新值单槽）")
         except Exception as exc:
             self.worker_error = str(exc)
             self.status_text.set(f"初始化失败: {exc}")
