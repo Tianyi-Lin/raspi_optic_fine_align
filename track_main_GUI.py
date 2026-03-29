@@ -371,6 +371,14 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
                 pass
             servo = None
             try:
+                try:
+                    import RPi.GPIO as _GPIO
+                    _GPIO.setwarnings(False)
+                    _GPIO.setmode(_GPIO.BCM)
+                    _GPIO.cleanup(int(settings.get("brushless_pan_txden", 22)))
+                    _GPIO.cleanup(int(settings.get("brushless_tilt_txden", 27)))
+                except Exception:
+                    pass
                 base_dir = os.path.dirname(os.path.abspath(__file__))
                 module = _load_module(
                     "_brushless_dual_driver_v1_mp",
