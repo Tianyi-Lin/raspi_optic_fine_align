@@ -381,6 +381,7 @@ class CircleTrackerGUI:
         self.tilt_max = tk.DoubleVar(value=90.0)
         
         # 卡尔曼滤波参数
+        self.kalman_enabled = tk.BooleanVar(value=True)
         self.kalman_process_noise = tk.DoubleVar(value=0.03)
         self.kalman_measurement_noise = tk.DoubleVar(value=0.4)
         
@@ -536,6 +537,7 @@ class CircleTrackerGUI:
             "hw_tilt_max": 90.0,
             "kalman_process_noise": 0.03,
             "kalman_measurement_noise": 0.4,
+            "kalman_enabled": True,
             "auto_stabilize": False,
             "stab_gain_pitch": 1.0,
             "stab_gain_yaw": 1.0,
@@ -648,6 +650,7 @@ class CircleTrackerGUI:
             "tilt_max": safe_float(self.tilt_max, "tilt_max"),
             "kalman_process_noise": safe_float(self.kalman_process_noise, "kalman_process_noise"),
             "kalman_measurement_noise": safe_float(self.kalman_measurement_noise, "kalman_measurement_noise"),
+                "kalman_enabled": safe_bool(self.kalman_enabled),
                 "auto_stabilize": safe_bool(self.auto_stabilize),
                 "stab_gain_pitch": safe_float(self.stab_gain_pitch, "stab_gain_pitch"),
                 "stab_gain_yaw": safe_float(self.stab_gain_yaw, "stab_gain_yaw"),
@@ -730,6 +733,7 @@ class CircleTrackerGUI:
             "tilt_max": 90.0,
             "kalman_process_noise": 0.03,
             "kalman_measurement_noise": 0.4,
+            "kalman_enabled": True,
             "auto_stabilize": False,
             "stab_gain_pitch": 1.0,
             "stab_gain_yaw": 1.0,
@@ -828,6 +832,7 @@ class CircleTrackerGUI:
             "tilt_max": safe_float(self.tilt_max, "tilt_max"),
             "kalman_process_noise": safe_float(self.kalman_process_noise, "kalman_process_noise"),
             "kalman_measurement_noise": safe_float(self.kalman_measurement_noise, "kalman_measurement_noise"),
+            "kalman_enabled": safe_bool(self.kalman_enabled, "kalman_enabled"),
             "auto_stabilize": safe_bool(self.auto_stabilize, "auto_stabilize"),
             "stab_gain_pitch": safe_float(self.stab_gain_pitch, "stab_gain_pitch"),
             "stab_gain_yaw": safe_float(self.stab_gain_yaw, "stab_gain_yaw"),
@@ -924,6 +929,7 @@ class CircleTrackerGUI:
             "tilt_max": self.tilt_max,
             "kalman_process_noise": self.kalman_process_noise,
             "kalman_measurement_noise": self.kalman_measurement_noise,
+            "kalman_enabled": self.kalman_enabled,
             "auto_stabilize": self.auto_stabilize,
             "stab_gain_pitch": self.stab_gain_pitch,
             "stab_gain_yaw": self.stab_gain_yaw,
@@ -1026,6 +1032,7 @@ class CircleTrackerGUI:
                 "tilt_max": float(self.tilt_max.get()),
                 "kalman_process_noise": float(self.kalman_process_noise.get()),
                 "kalman_measurement_noise": float(self.kalman_measurement_noise.get()),
+                "kalman_enabled": bool(self.kalman_enabled.get()),
                 "auto_stabilize": bool(self.auto_stabilize.get()),
                 "stab_gain_pitch": float(self.stab_gain_pitch.get()),
                 "stab_gain_yaw": float(self.stab_gain_yaw.get()),
@@ -1129,6 +1136,7 @@ class CircleTrackerGUI:
             self.tilt_max,
             self.kalman_process_noise,
             self.kalman_measurement_noise,
+            self.kalman_enabled,
             self.auto_stabilize,
             self.stab_gain_pitch,
             self.stab_gain_yaw,
@@ -1343,6 +1351,8 @@ class CircleTrackerGUI:
         kalman_frame.columnconfigure(0, weight=1)
         kalman_frame.columnconfigure(1, weight=1)
         rk = 0
+        ttk.Checkbutton(kalman_frame, text="启用卡尔曼滤波", variable=self.kalman_enabled).grid(row=rk, column=0, columnspan=2, sticky="w", pady=(2, 6))
+        rk += 1
         rk = self._grid_slider(kalman_frame, rk, 0, "过程噪声(运动不可预测性)", self.kalman_process_noise, 0.001, 0.05)
         ttk.Label(kalman_frame, text="越小:平滑但延迟大; 越大:响应快但易抖动", font=("", 8), foreground="gray", wraplength=180).grid(row=rk-1, column=2, sticky="w", padx=(6, 0))
         rk = self._grid_slider(kalman_frame, rk, 0, "测量噪声(检测结果不稳定性)", self.kalman_measurement_noise, 0.01, 0.05)
@@ -1769,12 +1779,20 @@ class CircleTrackerGUI:
                     measurement = (float(detection[0]), float(detection[1]))
                     radius = int(detection[2])
 
-                kalman_out = self.kalman.update(measurement)
-                if kalman_out is None:
-                    filtered_x, filtered_y = float(center_x), float(center_y)
-                    pred_x, pred_y = float(center_x), float(center_y)
+                if bool(s.get("kalman_enabled", True)):
+                    self.kalman.update_params(s["kalman_process_noise"], s["kalman_measurement_noise"])
+                    kalman_out = self.kalman.update(measurement)
+                    if kalman_out is None:
+                        filtered_x, filtered_y = float(center_x), float(center_y)
+                        pred_x, pred_y = float(center_x), float(center_y)
+                    else:
+                        filtered_x, filtered_y, pred_x, pred_y = kalman_out
                 else:
-                    filtered_x, filtered_y, pred_x, pred_y = kalman_out
+                    if measurement is None:
+                        filtered_x, filtered_y = float(center_x), float(center_y)
+                    else:
+                        filtered_x, filtered_y = measurement
+                    pred_x, pred_y = filtered_x, filtered_y
                     
                 # 目标圆心坐标（这里暂不加 bias，后面根据对准模式决定）
                 target_x = filtered_x
@@ -1787,8 +1805,6 @@ class CircleTrackerGUI:
                 self.pid_x.set_gains(s["kp_x"], s["ki_x"], s["kd_x"])
                 self.pid_y.set_gains(s["kp_y"], s["ki_y"], s["kd_y"])
                 
-                self.kalman.update_params(s["kalman_process_noise"], s["kalman_measurement_noise"])
-
                 # 处理激光对准逻辑
                 laser_spot_display = None
                 laser_found = False
