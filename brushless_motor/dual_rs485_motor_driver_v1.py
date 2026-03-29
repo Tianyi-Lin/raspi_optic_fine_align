@@ -86,11 +86,25 @@ class RS485Port:
 
         GPIO.setwarnings(False)
         GPIO.setmode(GPIO.BCM)
-        try:
-            GPIO.cleanup(self.txden_pin)
-        except Exception:
-            pass
-        GPIO.setup(self.txden_pin, GPIO.OUT, initial=GPIO.HIGH)  # 默认接收
+        last_err = None
+        for _ in range(5):
+            try:
+                GPIO.cleanup(self.txden_pin)
+            except Exception:
+                pass
+            try:
+                GPIO.setup(self.txden_pin, GPIO.OUT, initial=GPIO.HIGH)  # 默认接收
+                last_err = None
+                break
+            except Exception as exc:
+                last_err = exc
+                try:
+                    GPIO.cleanup()
+                except Exception:
+                    pass
+                time.sleep(0.05)
+        if last_err is not None:
+            raise RuntimeError(f"GPIO setup failed for TXDEN pin {self.txden_pin}: {last_err}")
 
     @staticmethod
     def checksum(data: bytes) -> int:

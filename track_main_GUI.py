@@ -290,6 +290,7 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
     imu_zero_yaw = 0.0
     stab_pan_filtered = 0.0
     stab_tilt_filtered = 0.0
+    next_servo_retry_ts = 0.0
     last_ts = time.time()
     last_push = 0.0
     while not stop_event.is_set():
@@ -349,6 +350,7 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
                         _set_current_process_affinity(msg.get("core_control"))
         except Exception:
             pass
+        loop_now = time.time()
         desired_key = (
             settings.get("brushless_pan_dev"),
             settings.get("brushless_tilt_dev"),
@@ -361,7 +363,7 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
             settings.get("pan_id"),
             settings.get("tilt_id"),
         )
-        if servo is None or servo_key != desired_key:
+        if (servo is None or servo_key != desired_key) and loop_now >= next_servo_retry_ts:
             try:
                 if servo is not None:
                     servo.cleanup()
@@ -409,8 +411,9 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
             except Exception as exc:
                 servo = None
                 servo_key = None
+                next_servo_retry_ts = time.time() + 0.5
                 try:
-                    status_queue.put_nowait(("control_err", str(exc)))
+                    status_queue.put_nowait(("control_err", f"servo init: {exc}"))
                 except Exception:
                     pass
         if servo is not None:
