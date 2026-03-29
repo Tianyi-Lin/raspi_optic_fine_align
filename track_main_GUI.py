@@ -421,10 +421,10 @@ class CircleTrackerGUI:
         self._autosave_suppress = True
 
         self._load_settings()
-        self.camera_target_size = (
-            max(160, int(self.camera_raw_width.get())),
-            max(120, int(self.camera_raw_height.get())),
-        )
+        init_w, init_h, _ = self._normalize_camera_resolution(self.camera_raw_width.get(), self.camera_raw_height.get())
+        self.camera_raw_width.set(init_w)
+        self.camera_raw_height.set(init_h)
+        self.camera_target_size = (init_w, init_h)
         self._build_ui()
         self.status_text.trace_add("write", self._on_status_text_changed)
         self.servo_mode.trace_add("write", self._on_servo_mode_change)
@@ -2685,14 +2685,25 @@ class CircleTrackerGUI:
 
     def _apply_camera_resolution(self):
         try:
-            w = max(160, int(self.camera_raw_width.get()))
-            h = max(120, int(self.camera_raw_height.get()))
+            w, h, adjusted = self._normalize_camera_resolution(self.camera_raw_width.get(), self.camera_raw_height.get())
+            self.camera_raw_width.set(w)
+            self.camera_raw_height.set(h)
             self.camera_target_size = (w, h)
             self.camera_reconfigure_event.set()
-            self.status_text.set(f"相机分辨率待应用: {w}x{h}")
+            if adjusted:
+                self.status_text.set(f"分辨率已校正为16倍数: {w}x{h}，等待应用")
+            else:
+                self.status_text.set(f"相机分辨率待应用: {w}x{h}")
         except Exception as exc:
             self.worker_error = str(exc)
             self.status_text.set(f"分辨率配置失败: {exc}")
+
+    def _normalize_camera_resolution(self, width, height):
+        w = max(160, int(width))
+        h = max(128, int(height))
+        w_aligned = max(160, (w // 16) * 16)
+        h_aligned = max(128, (h // 16) * 16)
+        return w_aligned, h_aligned, (w_aligned != w or h_aligned != h)
 
     def _apply_imu_output_rate(self):
         try:
