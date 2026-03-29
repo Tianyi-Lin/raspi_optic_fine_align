@@ -215,7 +215,35 @@ def _vision_process_main(stop_event, settings_queue, status_queue, latest_det):
 
 def _control_process_main(stop_event, settings_queue, status_queue, latest_det):
     _set_current_process_affinity("3")
-    settings = {"core_control": "3", "control_period_ms": 20}
+    settings = {
+        "core_control": "3",
+        "control_period_ms": 20,
+        "camera_raw_width": 640,
+        "camera_raw_height": 640,
+        "track_enabled": True,
+        "tracking_active": False,
+        "pan_enabled": True,
+        "tilt_enabled": True,
+        "deadband": 3.0,
+        "kp_x": 0.0075,
+        "ki_x": 0.025,
+        "kd_x": 0.000005,
+        "kp_y": 0.01,
+        "ki_y": 0.02,
+        "kd_y": 0.000005,
+        "pan_min": -360.0,
+        "pan_max": 360.0,
+        "tilt_min": -360.0,
+        "tilt_max": 360.0,
+        "brushless_pan_speed_dps": 120.0,
+        "brushless_tilt_speed_dps": 120.0,
+    }
+    pid_x = PID(kP=0.0075, kI=0.025, kD=0.000005, output_bound_low=-12, output_bound_high=12)
+    pid_y = PID(kP=0.01, kI=0.02, kD=0.000005, output_bound_low=-12, output_bound_high=12)
+    current_pan = 0.0
+    current_tilt = 0.0
+    servo = None
+    servo_key = None
     last_ts = time.time()
     last_push = 0.0
     while not stop_event.is_set():
@@ -228,20 +256,145 @@ def _control_process_main(stop_event, settings_queue, status_queue, latest_det):
                         _set_current_process_affinity(msg.get("core_control"))
         except Exception:
             pass
+        desired_key = (
+            settings.get("brushless_pan_dev"),
+            settings.get("brushless_tilt_dev"),
+            settings.get("brushless_pan_baudrate"),
+            settings.get("brushless_tilt_baudrate"),
+            settings.get("brushless_pan_txden"),
+            settings.get("brushless_tilt_txden"),
+            settings.get("brushless_pan_direction_sign"),
+            settings.get("brushless_tilt_direction_sign"),
+            settings.get("pan_id"),
+            settings.get("tilt_id"),
+        )
+        if servo is None or servo_key != desired_key:
+            try:
+                if servo is not None:
+                    servo.cleanup()
+            except Exception:
+                pass
+            servo = None
+            try:
+                base_dir = os.path.dirname(os.path.abspath(__file__))
+                module = _load_module(
+                    "_brushless_dual_driver_v1_mp",
+                    os.path.join(base_dir, "brushless_motor", "dual_rs485_motor_driver_v1.py"),
+                )
+                servo = BrushlessDualServoAdapter(
+                    motor_config_cls=module.MotorConfig,
+                    motor_cls=module.LkMotor,
+                    pan_id=int(settings.get("pan_id", 1)),
+                    tilt_id=int(settings.get("tilt_id", 2)),
+                    pan_dev=str(settings.get("brushless_pan_dev", "/dev/ttySC0")),
+                    tilt_dev=str(settings.get("brushless_tilt_dev", "/dev/ttySC1")),
+                    pan_baudrate=int(settings.get("brushless_pan_baudrate", 1000000)),
+                    tilt_baudrate=int(settings.get("brushless_tilt_baudrate", 1000000)),
+                    pan_txden=int(settings.get("brushless_pan_txden", 22)),
+                    tilt_txden=int(settings.get("brushless_tilt_txden", 27)),
+                    pan_direction_sign=int(settings.get("brushless_pan_direction_sign", 1)),
+                    tilt_direction_sign=int(settings.get("brushless_tilt_direction_sign", 1)),
+                    pan_speed_dps=float(settings.get("brushless_pan_speed_dps", 120.0)),
+                    tilt_speed_dps=float(settings.get("brushless_tilt_speed_dps", 120.0)),
+                    pan_min_deg=float(settings.get("pan_min", -360.0)),
+                    pan_max_deg=float(settings.get("pan_max", 360.0)),
+                    tilt_min_deg=float(settings.get("tilt_min", -360.0)),
+                    tilt_max_deg=float(settings.get("tilt_max", 360.0)),
+                )
+                servo.set_angles(
+                    [
+                        (int(settings.get("pan_id", 1)), current_pan),
+                        (int(settings.get("tilt_id", 2)), current_tilt),
+                    ]
+                )
+                servo.move_angle(wait=False)
+                servo_key = desired_key
+                try:
+                    status_queue.put_nowait(("control_info", "servo_connected"))
+                except Exception:
+                    pass
+            except Exception as exc:
+                servo = None
+                servo_key = None
+                try:
+                    status_queue.put_nowait(("control_err", str(exc)))
+                except Exception:
+                    pass
+        if servo is not None:
+            try:
+                servo.pan_speed_dps = float(settings.get("brushless_pan_speed_dps", 120.0))
+                servo.tilt_speed_dps = float(settings.get("brushless_tilt_speed_dps", 120.0))
+            except Exception:
+                pass
         now = time.time()
-        hz = 1.0 / max(1e-3, (now - last_ts))
+        dt = max(1e-3, (now - last_ts))
+        hz = 1.0 / dt
         last_ts = now
         valid = latest_det[5] > 0.5
         age = (now - float(latest_det[4])) if valid else -1.0
+        tracking_enabled = bool(settings.get("track_enabled", True)) and bool(settings.get("tracking_active", False))
+        pid_x.set_gains(float(settings.get("kp_x", 0.0075)), float(settings.get("ki_x", 0.025)), float(settings.get("kd_x", 0.000005)))
+        pid_y.set_gains(float(settings.get("kp_y", 0.01)), float(settings.get("ki_y", 0.02)), float(settings.get("kd_y", 0.000005)))
+        if tracking_enabled and valid and age <= 0.3 and servo is not None:
+            cx = float(latest_det[0])
+            cy = float(latest_det[1])
+            target_x = float(settings.get("camera_raw_width", 640)) * 0.5
+            target_y = float(settings.get("camera_raw_height", 640)) * 0.5
+            error_x = target_x - cx
+            error_y = target_y - cy
+            deadband = float(settings.get("deadband", 3.0))
+            if abs(error_x) <= deadband:
+                error_x = 0.0
+            if abs(error_y) <= deadband:
+                error_y = 0.0
+            delta_x = pid_x.update(error_x, dt=dt)
+            delta_y = pid_y.update(error_y, dt=dt)
+            pan_min = float(settings.get("pan_min", -360.0))
+            pan_max = float(settings.get("pan_max", 360.0))
+            tilt_min = float(settings.get("tilt_min", -360.0))
+            tilt_max = float(settings.get("tilt_max", 360.0))
+            if bool(settings.get("pan_enabled", True)):
+                current_pan = max(pan_min, min(pan_max, current_pan + float(delta_x)))
+            if bool(settings.get("tilt_enabled", True)):
+                current_tilt = max(tilt_min, min(tilt_max, current_tilt + float(delta_y)))
+            try:
+                servo.set_angles(
+                    [
+                        (int(settings.get("pan_id", 1)), current_pan),
+                        (int(settings.get("tilt_id", 2)), current_tilt),
+                    ]
+                )
+                servo.move_angle(wait=False)
+            except Exception as exc:
+                try:
+                    status_queue.put_nowait(("control_err", str(exc)))
+                except Exception:
+                    pass
+                try:
+                    servo.cleanup()
+                except Exception:
+                    pass
+                servo = None
+                servo_key = None
+        else:
+            pid_x.reset()
+            pid_y.reset()
         if now - last_push >= 0.25:
             try:
                 status_queue.put_nowait(("control_hz", hz))
                 status_queue.put_nowait(("det_age", age))
+                status_queue.put_nowait(("control_pan", current_pan))
+                status_queue.put_nowait(("control_tilt", current_tilt))
             except Exception:
                 pass
             last_push = now
         period_ms = max(1, int(settings.get("control_period_ms", 20)))
         time.sleep(period_ms / 1000.0)
+    try:
+        if servo is not None:
+            servo.cleanup()
+    except Exception:
+        pass
 
 
 class Kalman2D:
@@ -467,6 +620,8 @@ class CircleTrackerGUI:
         self.mp_control_hz = 0.0
         self.mp_vision_hz = 0.0
         self.mp_det_age = -1.0
+        self.mp_pan = 0.0
+        self.mp_tilt = 0.0
         self.stop_event = threading.Event()
         self.detect_stop_event = threading.Event()
         self.stab_stop_event = threading.Event()
@@ -2076,6 +2231,7 @@ class CircleTrackerGUI:
         self.mp_vision_proc.start()
         self.mp_control_proc.start()
         settings = self._get_settings()
+        settings["tracking_active"] = bool(self.tracking_active)
         try:
             self.mp_vision_settings_queue.put_nowait(settings)
             self.mp_control_settings_queue.put_nowait(settings)
@@ -2111,6 +2267,7 @@ class CircleTrackerGUI:
         if self.mp_vision_settings_queue is None or self.mp_control_settings_queue is None:
             return
         s = self._get_settings()
+        s["tracking_active"] = bool(self.tracking_active)
         for q in (self.mp_vision_settings_queue, self.mp_control_settings_queue):
             try:
                 if q.full():
@@ -2814,12 +2971,18 @@ class CircleTrackerGUI:
                         self.mp_det_age = float(val)
                     elif key == "vision_err":
                         self.worker_error = f"视觉进程错误: {val}"
+                    elif key == "control_err":
+                        self.worker_error = f"控制进程错误: {val}"
+                    elif key == "control_pan":
+                        self.mp_pan = float(val)
+                    elif key == "control_tilt":
+                        self.mp_tilt = float(val)
             except Exception:
                 pass
             if self.mp_latest_detection is not None and self.mp_latest_detection[5] > 0.5:
                 self.mp_det_age = max(0.0, time.time() - float(self.mp_latest_detection[4]))
             self.status_text.set(
-                f"多进程重构中 视觉Hz={self.mp_vision_hz:.1f} 控制Hz={self.mp_control_hz:.1f} 检测Age={self.mp_det_age:.3f}s"
+                f"多进程重构中 视觉Hz={self.mp_vision_hz:.1f} 控制Hz={self.mp_control_hz:.1f} 检测Age={self.mp_det_age:.3f}s 水平={self.mp_pan:.2f} 俯仰={self.mp_tilt:.2f}"
             )
             self.after_id = self.root.after(80, self._ui_loop)
             return
