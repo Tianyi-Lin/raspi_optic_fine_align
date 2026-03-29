@@ -1102,8 +1102,40 @@ class CircleTrackerGUI:
             self.laser_ranger = LaserRangerQueryMonitor(port="/dev/ttyAMA3", baudrate=115200, module_id=0, history_len=10)
         except Exception as exc:
             print(f"[WARNING] Laser Ranger init failed: {exc}")
-            
+        
+        self._release_local_hardware_handles()
         self.root.after(10, self._start_runtime)
+
+    def _release_local_hardware_handles(self):
+        if self.servo is not None:
+            try:
+                self.servo.cleanup()
+            except Exception:
+                pass
+            self.servo = None
+        if self.imu is not None:
+            try:
+                self.imu.close()
+            except Exception:
+                pass
+            self.imu = None
+        try:
+            import RPi.GPIO as _GPIO
+
+            _GPIO.setwarnings(False)
+            try:
+                if _GPIO.getmode() is None:
+                    _GPIO.setmode(_GPIO.BCM)
+            except Exception:
+                _GPIO.setmode(_GPIO.BCM)
+            try:
+                settings = self._get_settings()
+                _GPIO.cleanup(int(settings.get("brushless_pan_txden", 22)))
+                _GPIO.cleanup(int(settings.get("brushless_tilt_txden", 27)))
+            except Exception:
+                pass
+        except Exception:
+            pass
 
     def _update_settings_from_vars(self):
         fallback = {
@@ -2532,6 +2564,7 @@ class CircleTrackerGUI:
             self.mp_last_error = ""
             self._update_settings_from_vars()
             self._bind_current_thread_core(self.core_ui.get())
+            self._release_local_hardware_handles()
             self._start_multiprocess_runtime()
             self.running = True
             self.after_id = self.root.after(30, self._ui_loop)
