@@ -382,10 +382,10 @@ class CircleTrackerGUI:
         self.laser_threshold = tk.IntVar(value=240)        # 激光二值化阈值
         
         # 舵机角度范围配置（角度制）
-        self.pan_min = tk.DoubleVar(value=-180.0)
-        self.pan_max = tk.DoubleVar(value=180.0)
-        self.tilt_min = tk.DoubleVar(value=-90.0)
-        self.tilt_max = tk.DoubleVar(value=90.0)
+        self.pan_min = tk.DoubleVar(value=-360.0)
+        self.pan_max = tk.DoubleVar(value=360.0)
+        self.tilt_min = tk.DoubleVar(value=-360.0)
+        self.tilt_max = tk.DoubleVar(value=360.0)
         
         # 卡尔曼滤波参数
         self.kalman_enabled = tk.BooleanVar(value=True)
@@ -393,10 +393,10 @@ class CircleTrackerGUI:
         self.kalman_measurement_noise = tk.DoubleVar(value=0.4)
         
         # 硬件物理边界（从舵机读取）
-        self.hw_pan_min = tk.DoubleVar(value=-180.0)
-        self.hw_pan_max = tk.DoubleVar(value=180.0)
-        self.hw_tilt_min = tk.DoubleVar(value=-90.0)
-        self.hw_tilt_max = tk.DoubleVar(value=90.0)
+        self.hw_pan_min = tk.DoubleVar(value=-360.0)
+        self.hw_pan_max = tk.DoubleVar(value=360.0)
+        self.hw_tilt_min = tk.DoubleVar(value=-360.0)
+        self.hw_tilt_max = tk.DoubleVar(value=360.0)
         self.latest_frame = None
         self.latest_frame_id = 0
         self.latest_detection = None
@@ -543,14 +543,14 @@ class CircleTrackerGUI:
             "show_debug_panels": False,
             "laser_align_mode": False,
             "laser_threshold": 240,
-            "pan_min": -180.0,
-            "pan_max": 180.0,
-            "tilt_min": -90.0,
-            "tilt_max": 90.0,
-            "hw_pan_min": -180.0,
-            "hw_pan_max": 180.0,
-            "hw_tilt_min": -90.0,
-            "hw_tilt_max": 90.0,
+            "pan_min": -360.0,
+            "pan_max": 360.0,
+            "tilt_min": -360.0,
+            "tilt_max": 360.0,
+            "hw_pan_min": -360.0,
+            "hw_pan_max": 360.0,
+            "hw_tilt_min": -360.0,
+            "hw_tilt_max": 360.0,
             "kalman_process_noise": 0.03,
             "kalman_measurement_noise": 0.4,
             "kalman_enabled": True,
@@ -755,10 +755,10 @@ class CircleTrackerGUI:
             "hough_crop_height": 640,
             "image_rotate_deg": 0.0,
             "show_debug_panels": False,
-            "pan_min": -180.0,
-            "pan_max": 180.0,
-            "tilt_min": -90.0,
-            "tilt_max": 90.0,
+            "pan_min": -360.0,
+            "pan_max": 360.0,
+            "tilt_min": -360.0,
+            "tilt_max": 360.0,
             "kalman_process_noise": 0.03,
             "kalman_measurement_noise": 0.4,
             "kalman_enabled": True,
@@ -1418,11 +1418,22 @@ class CircleTrackerGUI:
         servo_range.columnconfigure(1, weight=1, uniform="col")
         r3 = 0
         # 修改 _grid_slider 的调用方式，让它在半宽中正常显示
-        r3 = self._grid_slider(servo_range, r3, 0, "水平最小", self.pan_min, -90.0, 0.0, colspan=1)
+        r3 = self._grid_slider(servo_range, r3, 0, "水平最小", self.pan_min, -360.0, 0.0, colspan=1)
         # 上一行的调用返回的是 r3+1，为了让最大和最小在同一行，我们需要把行号退回
-        self._grid_slider(servo_range, r3-1, 1, "水平最大", self.pan_max, 0.0, 90.0, colspan=1)
-        r3 = self._grid_slider(servo_range, r3, 0, "俯仰最小", self.tilt_min, -90.0, 0.0, colspan=1)
-        self._grid_slider(servo_range, r3-1, 1, "俯仰最大", self.tilt_max, 0.0, 90.0, colspan=1)
+        self._grid_slider(servo_range, r3-1, 1, "水平最大", self.pan_max, 0.0, 360.0, colspan=1)
+        r3 = self._grid_slider(servo_range, r3, 0, "俯仰最小", self.tilt_min, -360.0, 0.0, colspan=1)
+        self._grid_slider(servo_range, r3-1, 1, "俯仰最大", self.tilt_max, 0.0, 360.0, colspan=1)
+        entry_row = ttk.Frame(servo_range)
+        entry_row.grid(row=r3, column=0, columnspan=2, sticky="ew", pady=(2, 4))
+        ttk.Label(entry_row, text="水平最小").grid(row=0, column=0, sticky="e")
+        ttk.Entry(entry_row, textvariable=self.pan_min, width=8).grid(row=0, column=1, sticky="w", padx=(4, 10))
+        ttk.Label(entry_row, text="水平最大").grid(row=0, column=2, sticky="e")
+        ttk.Entry(entry_row, textvariable=self.pan_max, width=8).grid(row=0, column=3, sticky="w", padx=(4, 10))
+        ttk.Label(entry_row, text="俯仰最小").grid(row=0, column=4, sticky="e")
+        ttk.Entry(entry_row, textvariable=self.tilt_min, width=8).grid(row=0, column=5, sticky="w", padx=(4, 10))
+        ttk.Label(entry_row, text="俯仰最大").grid(row=0, column=6, sticky="e")
+        ttk.Entry(entry_row, textvariable=self.tilt_max, width=8).grid(row=0, column=7, sticky="w", padx=(4, 0))
+        r3 += 1
         self.range_canvas_pan = tk.Canvas(servo_range, height=24, highlightthickness=1, highlightbackground="#cfcfcf")
         self.range_canvas_pan.grid(row=r3, column=0, columnspan=2, sticky="ew", pady=(4, 2))
         r3 += 1
@@ -1435,15 +1446,15 @@ class CircleTrackerGUI:
         )
         
         # 硬件边界显示
-        hw_range = ttk.LabelFrame(tab_pid, text="舵机物理边界 (硬件读取)", padding=8)
+        hw_range = ttk.LabelFrame(tab_pid, text="舵机物理边界", padding=8)
         hw_range.pack(fill=tk.X, pady=(10, 0))
         hw_range.columnconfigure(0, weight=1)
         hw_range.columnconfigure(1, weight=1)
         
-        self.str_hw_pan_min = tk.StringVar(value="-90.0°")
-        self.str_hw_pan_max = tk.StringVar(value="90.0°")
-        self.str_hw_tilt_min = tk.StringVar(value="-90.0°")
-        self.str_hw_tilt_max = tk.StringVar(value="90.0°")
+        self.str_hw_pan_min = tk.StringVar(value="-360.0°")
+        self.str_hw_pan_max = tk.StringVar(value="360.0°")
+        self.str_hw_tilt_min = tk.StringVar(value="-360.0°")
+        self.str_hw_tilt_max = tk.StringVar(value="360.0°")
 
         ttk.Label(hw_range, text="水平最小:").grid(row=0, column=0, sticky="e")
         ttk.Label(hw_range, textvariable=self.str_hw_pan_min).grid(row=0, column=1, sticky="w", padx=5)
@@ -1453,6 +1464,7 @@ class CircleTrackerGUI:
         ttk.Label(hw_range, textvariable=self.str_hw_tilt_min).grid(row=1, column=1, sticky="w", padx=5)
         ttk.Label(hw_range, text="俯仰最大:").grid(row=1, column=2, sticky="e")
         ttk.Label(hw_range, textvariable=self.str_hw_tilt_max).grid(row=1, column=3, sticky="w", padx=5)
+        ttk.Label(hw_range, text="无刷电机物理边界固定为 ±360°（不做硬件读取）", foreground="gray").grid(row=2, column=0, columnspan=4, sticky="w", pady=(4, 0))
         
         # 绑定变量，以便动态更新字符串
         def update_hw_labels(*args):
@@ -1470,15 +1482,15 @@ class CircleTrackerGUI:
         def map_x(v, width):
             left = 8
             right = max(left + 1, width - 8)
-            return left + (float(v) + 90.0) / 180.0 * (right - left)
+            return left + (float(v) + 360.0) / 720.0 * (right - left)
 
         def draw_one(canvas, gui_min, gui_max, hw_min, hw_max):
             w = max(120, canvas.winfo_width())
             h = max(20, canvas.winfo_height())
             y = h / 2.0
             canvas.delete("all")
-            x0 = map_x(-90.0, w)
-            x1 = map_x(90.0, w)
+            x0 = map_x(-360.0, w)
+            x1 = map_x(360.0, w)
             canvas.create_line(x0, y, x1, y, fill="#bbbbbb", width=2)
             ph0 = map_x(hw_min, w)
             ph1 = map_x(hw_max, w)
@@ -1972,18 +1984,18 @@ class CircleTrackerGUI:
                         stab_tilt = float(self.stab_tilt_comp_deg)
                 # 使用GUI配置和硬件物理边界的交集作为最终限制
                 # max(硬件最小, GUI最小) 和 min(硬件最大, GUI最大)
-                pan_min = max(float(s.get("hw_pan_min", -90.0)), float(s.get("pan_min", -90.0)))
-                pan_max = min(float(s.get("hw_pan_max", 90.0)), float(s.get("pan_max", 90.0)))
-                tilt_min = max(float(s.get("hw_tilt_min", -90.0)), float(s.get("tilt_min", -90.0)))
-                tilt_max = min(float(s.get("hw_tilt_max", 90.0)), float(s.get("tilt_max", 90.0)))
-                gui_pan_min = float(s.get("pan_min", -90.0))
-                gui_pan_max = float(s.get("pan_max", 90.0))
-                gui_tilt_min = float(s.get("tilt_min", -90.0))
-                gui_tilt_max = float(s.get("tilt_max", 90.0))
-                hw_pan_min = float(s.get("hw_pan_min", -90.0))
-                hw_pan_max = float(s.get("hw_pan_max", 90.0))
-                hw_tilt_min = float(s.get("hw_tilt_min", -90.0))
-                hw_tilt_max = float(s.get("hw_tilt_max", 90.0))
+                pan_min = max(float(s.get("hw_pan_min", -360.0)), float(s.get("pan_min", -360.0)))
+                pan_max = min(float(s.get("hw_pan_max", 360.0)), float(s.get("pan_max", 360.0)))
+                tilt_min = max(float(s.get("hw_tilt_min", -360.0)), float(s.get("tilt_min", -360.0)))
+                tilt_max = min(float(s.get("hw_tilt_max", 360.0)), float(s.get("tilt_max", 360.0)))
+                gui_pan_min = float(s.get("pan_min", -360.0))
+                gui_pan_max = float(s.get("pan_max", 360.0))
+                gui_tilt_min = float(s.get("tilt_min", -360.0))
+                gui_tilt_max = float(s.get("tilt_max", 360.0))
+                hw_pan_min = float(s.get("hw_pan_min", -360.0))
+                hw_pan_max = float(s.get("hw_pan_max", 360.0))
+                hw_tilt_min = float(s.get("hw_tilt_min", -360.0))
+                hw_tilt_max = float(s.get("hw_tilt_max", 360.0))
 
                 # 更新前检测是否已经在边界，用于限制PID方向
                 pan_at_min_before = self.current_pan_angle <= pan_min
@@ -2244,10 +2256,10 @@ class CircleTrackerGUI:
                         float(yaw_err),
                     )
                 if not self.tracking_active and self.servo is not None:
-                    pan_min = max(float(s.get("hw_pan_min", -90.0)), float(s.get("pan_min", -90.0)))
-                    pan_max = min(float(s.get("hw_pan_max", 90.0)), float(s.get("pan_max", 90.0)))
-                    tilt_min = max(float(s.get("hw_tilt_min", -90.0)), float(s.get("tilt_min", -90.0)))
-                    tilt_max = min(float(s.get("hw_tilt_max", 90.0)), float(s.get("tilt_max", 90.0)))
+                    pan_min = max(float(s.get("hw_pan_min", -360.0)), float(s.get("pan_min", -360.0)))
+                    pan_max = min(float(s.get("hw_pan_max", 360.0)), float(s.get("pan_max", 360.0)))
+                    tilt_min = max(float(s.get("hw_tilt_min", -360.0)), float(s.get("tilt_min", -360.0)))
+                    tilt_max = min(float(s.get("hw_tilt_max", 360.0)), float(s.get("tilt_max", 360.0)))
                     with self.motion_lock:
                         out_pan = float(self.current_pan_angle)
                         out_tilt = float(self.current_tilt_angle)
@@ -3034,11 +3046,11 @@ class CircleTrackerGUI:
             self.servo.move_angle(wait=False)
             self.current_pan_angle = 0.0
             self.current_tilt_angle = 0.0
-            self.hw_pan_min.set(float(settings["pan_min"]))
-            self.hw_pan_max.set(float(settings["pan_max"]))
-            self.hw_tilt_min.set(float(settings["tilt_min"]))
-            self.hw_tilt_max.set(float(settings["tilt_max"]))
-            self.status_text.set("无刷RS485已连接")
+            self.hw_pan_min.set(-360.0)
+            self.hw_pan_max.set(360.0)
+            self.hw_tilt_min.set(-360.0)
+            self.hw_tilt_max.set(360.0)
+            self.status_text.set("无刷RS485已连接，物理边界固定±360°")
             self.servo_status_mode.set(settings.get("servo_mode"))
             return
         if settings.get("servo_mode") == "控制板":
