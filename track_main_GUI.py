@@ -297,23 +297,59 @@ def _vision_process_main(stop_event, settings_queue, status_queue, latest_det):
                         side = max(2, min(sw, sh))
                         x0 = max(0, (sw - side) // 2)
                         y0 = max(0, (sh - side) // 2)
-                        main_panel = small[y0 : y0 + side, x0 : x0 + side].copy()
-                        green = small[:, :, 1]
-                        red = small[:, :, 2] if small.shape[2] >= 3 else small[:, :, 0]
-                        green = green[y0 : y0 + side, x0 : x0 + side]
-                        red = red[y0 : y0 + side, x0 : x0 + side]
+                        square = small[y0 : y0 + side, x0 : x0 + side]
+                        main_panel = square.copy()
+                        green = square[:, :, 1]
+                        red = square[:, :, 2] if square.shape[2] >= 3 else square[:, :, 0]
                         blurred_green = cv2.GaussianBlur(green, (k, k), 1)
                         blurred_red = cv2.GaussianBlur(red, (k, k), 1)
+
+                        roi_x0 = 0
+                        roi_y0 = 0
+                        roi_x1 = side
+                        roi_y1 = side
+                        has_roi = False
+                        if det is not None:
+                            try:
+                                fw = int(frame.shape[1])
+                                fh = int(frame.shape[0])
+                                roi_w = max(32, min(fw, int(settings.get("hough_crop_width", fw))))
+                                roi_h = max(32, min(fh, int(settings.get("hough_crop_height", fh))))
+                                cx = float(det[0])
+                                cy = float(det[1])
+                                rx0 = max(0, min(fw - roi_w, int(round(cx - roi_w * 0.5))))
+                                ry0 = max(0, min(fh - roi_h, int(round(cy - roi_h * 0.5))))
+                                rx1 = rx0 + roi_w
+                                ry1 = ry0 + roi_h
+                                roi_x0 = max(0, min(side, int(round(rx0 * scale)) - x0))
+                                roi_y0 = max(0, min(side, int(round(ry0 * scale)) - y0))
+                                roi_x1 = max(0, min(side, int(round(rx1 * scale)) - x0))
+                                roi_y1 = max(0, min(side, int(round(ry1 * scale)) - y0))
+                                if roi_x1 > roi_x0 + 1 and roi_y1 > roi_y0 + 1:
+                                    has_roi = True
+                            except Exception:
+                                has_roi = False
+                        if has_roi:
+                            cv2.rectangle(main_panel, (roi_x0, roi_y0), (roi_x1 - 1, roi_y1 - 1), (0, 255, 255), 2)
+
                         green_panel = np.zeros((side, side, 3), dtype=np.uint8)
                         red_panel = np.zeros((side, side, 3), dtype=np.uint8)
-                        green_panel[:, :, 1] = blurred_green
-                        red_panel[:, :, 2] = blurred_red
-                        if bool(settings.get("laser_align_mode", False)):
-                            laser_threshold = int(settings.get("laser_threshold", 180))
-                            _, binary = cv2.threshold(blurred_red, laser_threshold, 255, cv2.THRESH_BINARY)
-                            bin_panel = cv2.cvtColor(binary, cv2.COLOR_GRAY2BGR)
+                        bin_panel = np.zeros((side, side, 3), dtype=np.uint8)
+
+                        if has_roi:
+                            green_panel[roi_y0:roi_y1, roi_x0:roi_x1, 1] = blurred_green[roi_y0:roi_y1, roi_x0:roi_x1]
+                            red_panel[roi_y0:roi_y1, roi_x0:roi_x1, 2] = blurred_red[roi_y0:roi_y1, roi_x0:roi_x1]
+                            if bool(settings.get("laser_align_mode", False)):
+                                laser_threshold = int(settings.get("laser_threshold", 180))
+                                _, binary = cv2.threshold(blurred_red, laser_threshold, 255, cv2.THRESH_BINARY)
+                                bin_panel[roi_y0:roi_y1, roi_x0:roi_x1] = cv2.cvtColor(binary, cv2.COLOR_GRAY2BGR)[roi_y0:roi_y1, roi_x0:roi_x1]
                         else:
-                            bin_panel = np.zeros((side, side, 3), dtype=np.uint8)
+                            green_panel[:, :, 1] = blurred_green
+                            red_panel[:, :, 2] = blurred_red
+                            if bool(settings.get("laser_align_mode", False)):
+                                laser_threshold = int(settings.get("laser_threshold", 180))
+                                _, binary = cv2.threshold(blurred_red, laser_threshold, 255, cv2.THRESH_BINARY)
+                                bin_panel = cv2.cvtColor(binary, cv2.COLOR_GRAY2BGR)
                         if det is not None:
                             dx = int(round(det[0] * scale)) - x0
                             dy = int(round(det[1] * scale)) - y0
