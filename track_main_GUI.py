@@ -333,6 +333,7 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
     last_imu_push = 0.0
     last_auto_stabilize = False
     last_timing_push = 0.0
+    jog_hold_until = 0.0
     while not stop_event.is_set():
         loop_start = time.time()
         try:
@@ -377,6 +378,9 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
                         if len(cmd) >= 3:
                             current_pan += float(cmd[1])
                             current_tilt += float(cmd[2])
+                            pid_x.reset()
+                            pid_y.reset()
+                            jog_hold_until = time.time() + 0.25
                     elif cmd[0] == "shutdown_pose":
                         current_pan = float(settings.get("shutdown_pan_deg", 0.0))
                         current_tilt = float(settings.get("shutdown_tilt_deg", 0.0))
@@ -550,6 +554,8 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
         det_update_age = now - float(latest_det[4])
         age = det_update_age if valid else -1.0
         tracking_enabled = bool(settings.get("track_enabled", True)) and bool(settings.get("tracking_active", False))
+        if now < jog_hold_until:
+            tracking_enabled = False
         pid_x.set_gains(float(settings.get("kp_x", 0.0075)), float(settings.get("ki_x", 0.025)), float(settings.get("kd_x", 0.000005)))
         pid_y.set_gains(float(settings.get("kp_y", 0.01)), float(settings.get("ki_y", 0.02)), float(settings.get("kd_y", 0.000005)))
         delta_x = 0.0
