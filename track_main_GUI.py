@@ -141,6 +141,10 @@ def _vision_process_main(stop_event, settings_queue, status_queue, latest_det):
         "show_debug_panels": False,
         "laser_align_mode": False,
         "laser_threshold": 180,
+        "hough_crop_width": 640,
+        "hough_crop_height": 640,
+        "mp_roi_enabled": True,
+        "mp_roi_stale_sec": 0.25,
         "ksize": 5,
         "min_dist": 80,
         "param1": 220,
@@ -209,15 +213,52 @@ def _vision_process_main(stop_event, settings_queue, status_queue, latest_det):
             frame = frame[y0 : y0 + ch, x0 : x0 + cw]
         except Exception:
             pass
-        det = _detect_circle_np(
-            frame,
-            ksize=settings.get("ksize", 5),
-            min_dist=settings.get("min_dist", 80),
-            param1=settings.get("param1", 220),
-            param2=settings.get("param2", 35),
-            min_radius=settings.get("min_radius", 20),
-            max_radius=settings.get("max_radius", 120),
-        )
+        det = None
+        used_roi = False
+        try:
+            roi_enabled = bool(settings.get("mp_roi_enabled", True))
+        except Exception:
+            roi_enabled = True
+        if roi_enabled:
+            try:
+                fw = int(frame.shape[1])
+                fh = int(frame.shape[0])
+                roi_w = max(32, min(fw, int(settings.get("hough_crop_width", fw))))
+                roi_h = max(32, min(fh, int(settings.get("hough_crop_height", fh))))
+                valid = float(latest_det[5]) > 0.5
+                stale_sec = float(settings.get("mp_roi_stale_sec", 0.25))
+                age = time.time() - float(latest_det[4])
+                if valid and age <= stale_sec and (roi_w < fw or roi_h < fh):
+                    cx = float(latest_det[0])
+                    cy = float(latest_det[1])
+                    rx0 = max(0, min(fw - roi_w, int(round(cx - roi_w * 0.5))))
+                    ry0 = max(0, min(fh - roi_h, int(round(cy - roi_h * 0.5))))
+                    roi = frame[ry0 : ry0 + roi_h, rx0 : rx0 + roi_w]
+                    det = _detect_circle_np(
+                        roi,
+                        ksize=settings.get("ksize", 5),
+                        min_dist=settings.get("min_dist", 80),
+                        param1=settings.get("param1", 220),
+                        param2=settings.get("param2", 35),
+                        min_radius=settings.get("min_radius", 20),
+                        max_radius=settings.get("max_radius", 120),
+                    )
+                    used_roi = True
+                    if det is not None:
+                        det = (int(det[0]) + rx0, int(det[1]) + ry0, int(det[2]))
+            except Exception:
+                det = None
+                used_roi = False
+        if det is None:
+            det = _detect_circle_np(
+                frame,
+                ksize=settings.get("ksize", 5),
+                min_dist=settings.get("min_dist", 80),
+                param1=settings.get("param1", 220),
+                param2=settings.get("param2", 35),
+                min_radius=settings.get("min_radius", 20),
+                max_radius=settings.get("max_radius", 120),
+            )
         ts = time.time()
         if det is not None:
             latest_det[0] = float(det[0])
