@@ -445,19 +445,36 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
                 imu = IMUReader(
                     port=str(settings.get("imu_port", "/dev/ttyUSB0")),
                     baudrate=int(settings.get("imu_baudrate", 9600)),
-                    use_6axis=bool(settings.get("imu_use_6axis", True)),
-                    output_hz=int(settings.get("imu_output_hz", 50)),
-                    ax_offset_g=float(settings.get("imu_ax_offset_g", 0.0)),
-                    ay_offset_g=float(settings.get("imu_ay_offset_g", 0.0)),
-                    az_offset_g=float(settings.get("imu_az_offset_g", 0.0)),
-                    gx_offset_dps=float(settings.get("imu_gx_offset_dps", 0.0)),
-                    gy_offset_dps=float(settings.get("imu_gy_offset_dps", 0.0)),
-                    gz_offset_dps=float(settings.get("imu_gz_offset_dps", 0.0)),
-                    hx_offset=int(settings.get("imu_hx_offset", 0)),
-                    hy_offset=int(settings.get("imu_hy_offset", 0)),
-                    hz_offset=int(settings.get("imu_hz_offset", 0)),
-                    az_reference_g=float(settings.get("imu_az_reference_g", 1.0)),
+                    timeout=0.1,
+                    debug=False,
                 )
+                try:
+                    imu.configure_output(output_mask=0x001E, rate_code=0x08)
+                except Exception:
+                    pass
+                try:
+                    imu.set_algorithm_mode(bool(settings.get("imu_use_6axis", True)))
+                except Exception:
+                    pass
+                try:
+                    imu.set_output_rate_hz(int(settings.get("imu_output_hz", 50)))
+                except Exception:
+                    pass
+                try:
+                    imu.set_sensor_offsets(
+                        ax_g=float(settings.get("imu_ax_offset_g", 0.0)),
+                        ay_g=float(settings.get("imu_ay_offset_g", 0.0)),
+                        az_g=float(settings.get("imu_az_offset_g", 0.0)),
+                        gx_dps=float(settings.get("imu_gx_offset_dps", 0.0)),
+                        gy_dps=float(settings.get("imu_gy_offset_dps", 0.0)),
+                        gz_dps=float(settings.get("imu_gz_offset_dps", 0.0)),
+                        hx=int(settings.get("imu_hx_offset", 0)),
+                        hy=int(settings.get("imu_hy_offset", 0)),
+                        hz=int(settings.get("imu_hz_offset", 0)),
+                    )
+                except Exception:
+                    pass
+                imu.start()
                 imu_key = imu_desired_key
             except Exception as exc:
                 imu = None
