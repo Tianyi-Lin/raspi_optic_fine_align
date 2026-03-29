@@ -2275,24 +2275,20 @@ class CircleTrackerGUI:
                     crop_h = h_full
                 crop_w = min(crop_w, w_full)
                 crop_h = min(crop_h, h_full)
-                crop_x0 = (w_full - crop_w) // 2
-                crop_y0 = (h_full - crop_h) // 2
-                frame_for_detect = frame_rgb[crop_y0:crop_y0 + crop_h, crop_x0:crop_x0 + crop_w]
-                roi = None
                 with self.detect_lock:
                     last_det = self.latest_detection
                     last_det_time = self.latest_detection_time
+                crop_x0 = 0
+                crop_y0 = 0
                 if last_det is not None and (time.time() - last_det_time) <= self.detect_stale_sec:
-                    h, w = frame_for_detect.shape[:2]
-                    margin = max(80, int(last_det[2] * 2.5))
-                    det_x = int(last_det[0] - crop_x0)
-                    det_y = int(last_det[1] - crop_y0)
-                    x0 = max(0, int(det_x - margin))
-                    y0 = max(0, int(det_y - margin))
-                    x1 = min(w, int(det_x + margin))
-                    y1 = min(h, int(det_y + margin))
-                    if x1 - x0 >= 20 and y1 - y0 >= 20:
-                        roi = (x0, y0, x1, y1)
+                    det_cx = int(last_det[0])
+                    det_cy = int(last_det[1])
+                    crop_x0 = max(0, min(w_full - crop_w, det_cx - (crop_w // 2)))
+                    crop_y0 = max(0, min(h_full - crop_h, det_cy - (crop_h // 2)))
+                    frame_for_detect = frame_rgb[crop_y0:crop_y0 + crop_h, crop_x0:crop_x0 + crop_w]
+                else:
+                    frame_for_detect = frame_rgb
+                roi = None
                 detection, blurred_green, blurred_red, offset_x, offset_y, scale = self._detect_circle(
                     frame_for_detect,
                     ksize=s["ksize"],
