@@ -86,6 +86,10 @@ class RS485Port:
 
         GPIO.setwarnings(False)
         GPIO.setmode(GPIO.BCM)
+        try:
+            GPIO.cleanup(self.txden_pin)
+        except Exception:
+            pass
         GPIO.setup(self.txden_pin, GPIO.OUT, initial=GPIO.HIGH)  # 默认接收
 
     @staticmethod
@@ -101,6 +105,15 @@ class RS485Port:
     def close(self) -> None:
         try:
             self.ser.close()
+        except Exception:
+            pass
+        try:
+            self._set_recv()
+        except Exception:
+            pass
+        try:
+            if GPIO is not None:
+                GPIO.cleanup(self.txden_pin)
         except Exception:
             pass
 
