@@ -137,6 +137,7 @@ def _vision_process_main(stop_event, settings_queue, status_queue, latest_det):
         "multiprocess_preview": True,
         "sensor_bit_depth": 10,
         "video_crop_ratio": 1.0,
+        "preview_push_hz": 15,
         "ksize": 5,
         "min_dist": 80,
         "param1": 220,
@@ -226,7 +227,9 @@ def _vision_process_main(stop_event, settings_queue, status_queue, latest_det):
             latest_det[5] = 0.0
             latest_det[4] = ts
         frame_count += 1
-        if ts - last_fps_push >= 0.25:
+        push_hz = float(settings.get("preview_push_hz", 15.0))
+        push_period = 1.0 / max(1.0, push_hz)
+        if ts - last_fps_push >= push_period:
             hz = frame_count / max(1e-3, (ts - last_ts))
             frame_count = 0
             last_ts = ts
@@ -1050,6 +1053,8 @@ class CircleTrackerGUI:
         self.x_bias = tk.IntVar(value=0)
         self.y_bias = tk.IntVar(value=0)
         self.camera_fps = tk.IntVar(value=120)
+        self.ui_refresh_hz = tk.IntVar(value=30)
+        self.preview_push_hz = tk.IntVar(value=15)
         self.camera_raw_width = tk.IntVar(value=640)
         self.camera_raw_height = tk.IntVar(value=640)
         self.sensor_bit_depth = tk.IntVar(value=10)
@@ -1130,6 +1135,12 @@ class CircleTrackerGUI:
         self.camera_raw_height.set(init_h)
         self.camera_target_size = (init_w, init_h)
         self._build_ui()
+        self._preview_box_size = None
+        self._autosize_window()
+        try:
+            self.preview_label.bind("<Configure>", self._on_preview_label_configure)
+        except Exception:
+            pass
         self.status_text.trace_add("write", self._on_status_text_changed)
         self.servo_mode.trace_add("write", self._on_servo_mode_change)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -1193,6 +1204,42 @@ class CircleTrackerGUI:
         
         self._release_local_hardware_handles()
         self.root.after(10, self._start_runtime)
+
+    def _autosize_window(self):
+        try:
+            sw = int(self.root.winfo_screenwidth())
+            sh = int(self.root.winfo_screenheight())
+        except Exception:
+            return
+        w = max(900, int(sw * 0.92))
+        h = max(650, int(sh * 0.88))
+        x = max(0, (sw - w) // 2)
+        y = max(0, (sh - h) // 2)
+        try:
+            self.root.geometry(f"{w}x{h}+{x}+{y}")
+        except Exception:
+            pass
+        try:
+            self.root.minsize(900, 650)
+        except Exception:
+            pass
+
+    def _on_preview_label_configure(self, event):
+        try:
+            w = int(event.width)
+            h = int(event.height)
+        except Exception:
+            return
+        if w >= 64 and h >= 64:
+            self._preview_box_size = (w, h)
+
+    def _ui_refresh_delay_ms(self):
+        try:
+            hz = int(self.ui_refresh_hz.get())
+        except Exception:
+            hz = 30
+        hz = max(1, hz)
+        return max(5, int(round(1000.0 / float(hz))))
 
     def _release_local_hardware_handles(self):
         if self.servo is not None:
@@ -1275,7 +1322,9 @@ class CircleTrackerGUI:
             "detect_ema_alpha": 0.3,
             "x_bias": 0,
             "y_bias": 0,
-            "camera_fps": 60,
+            "camera_fps": 120,
+            "ui_refresh_hz": 30,
+            "preview_push_hz": 15,
             "camera_raw_width": 640,
             "camera_raw_height": 640,
             "sensor_bit_depth": 10,
@@ -1412,6 +1461,8 @@ class CircleTrackerGUI:
                 "x_bias": safe_int(self.x_bias, "x_bias"),
                 "y_bias": safe_int(self.y_bias, "y_bias"),
                 "camera_fps": safe_int(self.camera_fps, "camera_fps"),
+                "ui_refresh_hz": safe_int(self.ui_refresh_hz, "ui_refresh_hz"),
+                "preview_push_hz": safe_int(self.preview_push_hz, "preview_push_hz"),
                 "camera_raw_width": safe_int(self.camera_raw_width, "camera_raw_width"),
                 "camera_raw_height": safe_int(self.camera_raw_height, "camera_raw_height"),
                 "sensor_bit_depth": safe_int(self.sensor_bit_depth, "sensor_bit_depth"),
@@ -1514,8 +1565,13 @@ class CircleTrackerGUI:
             "detect_ema_alpha": 0.3,
             "x_bias": 0,
             "y_bias": 0,
+            "camera_fps": 120,
+            "ui_refresh_hz": 30,
+            "preview_push_hz": 15,
             "camera_raw_width": 640,
             "camera_raw_height": 640,
+            "sensor_bit_depth": 10,
+            "video_crop_ratio": 1.0,
             "hough_crop_width": 640,
             "hough_crop_height": 640,
             "image_rotate_deg": 0.0,
@@ -1626,6 +1682,8 @@ class CircleTrackerGUI:
             "x_bias": safe_int(self.x_bias, "x_bias"),
             "y_bias": safe_int(self.y_bias, "y_bias"),
             "camera_fps": safe_int(self.camera_fps, "camera_fps"),
+            "ui_refresh_hz": safe_int(self.ui_refresh_hz, "ui_refresh_hz"),
+            "preview_push_hz": safe_int(self.preview_push_hz, "preview_push_hz"),
             "camera_raw_width": safe_int(self.camera_raw_width, "camera_raw_width"),
             "camera_raw_height": safe_int(self.camera_raw_height, "camera_raw_height"),
             "sensor_bit_depth": safe_int(self.sensor_bit_depth, "sensor_bit_depth"),
@@ -1742,6 +1800,9 @@ class CircleTrackerGUI:
             "detect_ema_alpha": self.detect_ema_alpha,
             "x_bias": self.x_bias,
             "y_bias": self.y_bias,
+            "camera_fps": self.camera_fps,
+            "ui_refresh_hz": self.ui_refresh_hz,
+            "preview_push_hz": self.preview_push_hz,
             "camera_raw_width": self.camera_raw_width,
             "camera_raw_height": self.camera_raw_height,
             "sensor_bit_depth": self.sensor_bit_depth,
@@ -1860,6 +1921,8 @@ class CircleTrackerGUI:
                 "x_bias": int(self.x_bias.get()),
                 "y_bias": int(self.y_bias.get()),
                 "camera_fps": int(self.camera_fps.get()),
+                "ui_refresh_hz": int(self.ui_refresh_hz.get()),
+                "preview_push_hz": int(self.preview_push_hz.get()),
                 "camera_raw_width": int(self.camera_raw_width.get()),
                 "camera_raw_height": int(self.camera_raw_height.get()),
                 "sensor_bit_depth": int(self.sensor_bit_depth.get()),
@@ -1992,6 +2055,8 @@ class CircleTrackerGUI:
             self.show_debug_panels,
             self.aggressive_perf_mode,
             self.camera_fps,
+            self.ui_refresh_hz,
+            self.preview_push_hz,
             self.laser_align_mode,
             self.laser_threshold,
             self.pan_min,
@@ -2429,6 +2494,8 @@ class CircleTrackerGUI:
         ttk.Button(cam, text="应用分辨率", command=self._apply_camera_resolution).grid(row=rc, column=0, sticky="w", pady=(2, 8))
         rc += 1
         rc = self._grid_slider(cam, rc, 0, "相机FPS", self.camera_fps, 10, 120)
+        rc = self._grid_slider(cam, rc, 0, "GUI刷新Hz", self.ui_refresh_hz, 5, 60)
+        rc = self._grid_slider(cam, rc, 0, "多进程预览Hz", self.preview_push_hz, 2, 30)
         rotate_frame = ttk.Frame(cam)
         rotate_frame.grid(row=rc, column=0, sticky="ew", pady=(2, 6))
         rotate_frame.columnconfigure(0, weight=1)
@@ -2690,7 +2757,7 @@ class CircleTrackerGUI:
             self._release_local_hardware_handles()
             self._start_multiprocess_runtime()
             self.running = True
-            self.after_id = self.root.after(30, self._ui_loop)
+            self.after_id = self.root.after(self._ui_refresh_delay_ms(), self._ui_loop)
             self.status_text.set("多进程模式运行中")
         except Exception as exc:
             self.worker_error = str(exc)
@@ -3445,12 +3512,16 @@ class CircleTrackerGUI:
             self.servo_status_tilt.set(f"{self.mp_tilt:.1f}")
             self.servo_status_voltage.set("-")
             tracking_flag = int(bool(self.tracking_active) and bool(self.track_enabled.get()))
+            try:
+                period_ms = int(self.control_period_ms.get())
+            except Exception:
+                period_ms = 0
             self.status_text.set(
-                f"多进程运行中 跟踪={tracking_flag} V={int(vision_alive)} C={int(control_alive)} 视觉Hz={self.mp_vision_hz:.1f} 控制Hz={self.mp_control_hz:.1f} 检测Age={self.mp_det_age:.3f}s 水平={self.mp_pan:.2f} 俯仰={self.mp_tilt:.2f}"
+                f"多进程运行中 跟踪={tracking_flag} V={int(vision_alive)} C={int(control_alive)} 周期ms={period_ms} 视觉Hz={self.mp_vision_hz:.1f} 控制Hz={self.mp_control_hz:.1f} 检测Age={self.mp_det_age:.3f}s 水平={self.mp_pan:.2f} 俯仰={self.mp_tilt:.2f}"
             )
             if self.mp_last_error:
                 self.status_text.set(self.status_text.get() + f" 错误={self.mp_last_error}")
-            self.after_id = self.root.after(80, self._ui_loop)
+            self.after_id = self.root.after(self._ui_refresh_delay_ms(), self._ui_loop)
             return
         latest = None
         try:
@@ -3622,7 +3693,7 @@ class CircleTrackerGUI:
             else:
                 self.fps_warning_var.set("")
 
-        self.after_id = self.root.after(30, self._ui_loop)
+        self.after_id = self.root.after(self._ui_refresh_delay_ms(), self._ui_loop)
 
     def _sync_camera_controls(self, ae_enable, exposure, gain, target_fps):
         # 检查是否有变化
@@ -4357,29 +4428,29 @@ class CircleTrackerGUI:
                 cv2.putText(frame, "DOWN LIMIT", (w//2-60, h-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
 
     def _fit_preview_image(self, img_rgb):
-        try:
-            box_w = int(self.preview_label.winfo_width())
-            box_h = int(self.preview_label.winfo_height())
-        except Exception:
-            return img_rgb
-        if box_w < 32 or box_h < 32:
+        box = getattr(self, "_preview_box_size", None)
+        if box is None:
+            try:
+                box_w = int(self.preview_label.winfo_width())
+                box_h = int(self.preview_label.winfo_height())
+            except Exception:
+                return img_rgb
+        else:
+            box_w, box_h = int(box[0]), int(box[1])
+        if box_w < 64 or box_h < 64:
             return img_rgb
         ih, iw = img_rgb.shape[:2]
         if iw <= 0 or ih <= 0:
             return img_rgb
-        scale = max(box_w / float(iw), box_h / float(ih))
+        scale = min(box_w / float(iw), box_h / float(ih))
         new_w = max(1, int(round(iw * scale)))
         new_h = max(1, int(round(ih * scale)))
-        if new_w != iw or new_h != ih:
-            interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
-            img_rgb = cv2.resize(img_rgb, (new_w, new_h), interpolation=interp)
-        x0 = max(0, (new_w - box_w) // 2)
-        y0 = max(0, (new_h - box_h) // 2)
-        x1 = min(new_w, x0 + box_w)
-        y1 = min(new_h, y0 + box_h)
-        out = img_rgb[y0:y1, x0:x1]
-        if out.shape[1] != box_w or out.shape[0] != box_h:
-            out = cv2.resize(out, (box_w, box_h), interpolation=cv2.INTER_LINEAR)
+        interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+        resized = cv2.resize(img_rgb, (new_w, new_h), interpolation=interp)
+        out = np.zeros((box_h, box_w, 3), dtype=resized.dtype)
+        x0 = max(0, (box_w - new_w) // 2)
+        y0 = max(0, (box_h - new_h) // 2)
+        out[y0:y0 + new_h, x0:x0 + new_w] = resized
         return out
 
     def on_close(self):
