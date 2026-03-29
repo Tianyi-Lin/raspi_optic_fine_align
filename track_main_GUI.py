@@ -1493,7 +1493,29 @@ class CircleTrackerGUI:
         cam.columnconfigure(0, weight=1)
         rc = 0
         rc = self._grid_slider(cam, rc, 0, "相机FPS", self.camera_fps, 10, 120)
-        rc = self._grid_slider(cam, rc, 0, "图像旋转(°)", self.image_rotate_deg, -180.0, 180.0)
+        rotate_frame = ttk.Frame(cam)
+        rotate_frame.grid(row=rc, column=0, sticky="ew", pady=(2, 6))
+        rotate_frame.columnconfigure(0, weight=1)
+        rotate_header = ttk.Frame(rotate_frame)
+        rotate_header.grid(row=0, column=0, sticky="ew")
+        rotate_header.columnconfigure(0, weight=1)
+        ttk.Label(rotate_header, text="图像旋转(°)").grid(row=0, column=0, sticky="w")
+        rotate_value_text = tk.StringVar(value=f"{self.image_rotate_deg.get():.2f}")
+        ttk.Label(rotate_header, textvariable=rotate_value_text).grid(row=0, column=1, sticky="e")
+        rotate_scale = tk.Scale(
+            rotate_frame,
+            from_=-180.0,
+            to=180.0,
+            orient=tk.HORIZONTAL,
+            resolution=0.1,
+            variable=self.image_rotate_deg,
+            showvalue=False,
+            length=380,
+        )
+        rotate_scale.grid(row=1, column=0, sticky="ew")
+        ttk.Entry(rotate_frame, textvariable=self.image_rotate_deg, width=10).grid(row=2, column=0, sticky="w", pady=(2, 0))
+        self.image_rotate_deg.trace_add("write", lambda *_: rotate_value_text.set(f"{self.image_rotate_deg.get():.2f}"))
+        rc += 1
         
         # 添加红色警告提示Label (初始隐藏或为空)
         self.fps_warning_var = tk.StringVar(value="")
