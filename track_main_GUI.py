@@ -325,6 +325,7 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
     next_servo_retry_ts = 0.0
     last_ts = time.time()
     last_push = 0.0
+    last_auto_stabilize = False
     while not stop_event.is_set():
         try:
             while True:
@@ -563,7 +564,9 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
         imu_pitch = 0.0
         imu_yaw = 0.0
         imu_age = -1.0
-        if bool(settings.get("auto_stabilize", False)) and imu is not None:
+        auto_stabilize = bool(settings.get("auto_stabilize", False))
+        had_imu_sample = False
+        if auto_stabilize and imu is not None:
             try:
                 imu_state = imu.get_state()
             except Exception as exc:
@@ -573,9 +576,19 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
                 except Exception:
                     pass
             if imu_state is not None and imu_state.last_update > 0:
+                had_imu_sample = True
                 imu_pitch = float(imu_state.pitch_deg)
                 imu_yaw = float(imu_state.yaw_deg)
                 imu_age = max(0.0, now - float(imu_state.last_update))
+                if not last_auto_stabilize:
+                    imu_zero_pitch = imu_pitch
+                    imu_zero_yaw = imu_yaw
+                    stab_pan_filtered = 0.0
+                    stab_tilt_filtered = 0.0
+                    try:
+                        status_queue.put_nowait(("imu_zero_base", (imu_zero_pitch, imu_zero_yaw)))
+                    except Exception:
+                        pass
                 pitch_err = ((imu_pitch - imu_zero_pitch + 180.0) % 360.0) - 180.0
                 yaw_err = ((imu_yaw - imu_zero_yaw + 180.0) % 360.0) - 180.0
                 enable_pitch = bool(settings.get("stab_enable_pitch", True))
@@ -610,6 +623,7 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
                 pan_rate = max(0.0, float(settings.get("stab_pan_rate_limit_deg_per_s", 120.0)))
                 stab_tilt = max(-tilt_rate * dt, min(tilt_rate * dt, stab_tilt_filtered))
                 stab_pan = max(-pan_rate * dt, min(pan_rate * dt, stab_pan_filtered))
+        last_auto_stabilize = bool(auto_stabilize and had_imu_sample)
         if servo is not None:
             pan_min = float(settings.get("pan_min", -360.0))
             pan_max = float(settings.get("pan_max", 360.0))
@@ -3106,6 +3120,7 @@ class CircleTrackerGUI:
     def _stabilization_loop(self):
         self._bind_current_thread_core(self.core_stabilize.get())
         last_time = time.time()
+        last_auto_stabilize = False
         try:
             while not self.stab_stop_event.is_set():
                 if not self.running:
@@ -3117,10 +3132,12 @@ class CircleTrackerGUI:
                 loop_start = time.time()
                 dt = max(loop_start - last_time, 1e-4)
                 last_time = loop_start
-                if not bool(s.get("auto_stabilize", False)):
+                auto_stabilize = bool(s.get("auto_stabilize", False))
+                if not auto_stabilize:
                     with self.motion_lock:
                         self.stab_pan_comp_deg = 0.0
                         self.stab_tilt_comp_deg = 0.0
+                    last_auto_stabilize = False
                     time.sleep(period_ms / 1000.0)
                     continue
                 try:
@@ -3134,6 +3151,17 @@ class CircleTrackerGUI:
                 if imu_state is None or imu_state.last_update <= 0:
                     time.sleep(period_ms / 1000.0)
                     continue
+                if not last_auto_stabilize:
+                    with self.motion_lock:
+                        self.imu_zero_pitch = float(imu_state.pitch_deg)
+                        self.imu_zero_yaw = float(imu_state.yaw_deg)
+                        self.stab_pan_residual_deg = 0.0
+                        self.stab_tilt_residual_deg = 0.0
+                        self.stab_pan_filtered_deg = 0.0
+                        self.stab_tilt_filtered_deg = 0.0
+                        self.stab_pan_comp_deg = 0.0
+                        self.stab_tilt_comp_deg = 0.0
+                    last_auto_stabilize = True
                 pitch_err = self._angle_diff_deg(imu_state.pitch_deg, self.imu_zero_pitch)
                 yaw_err = self._angle_diff_deg(imu_state.yaw_deg, self.imu_zero_yaw)
                 enable_pitch = bool(s.get("stab_enable_pitch", True))
