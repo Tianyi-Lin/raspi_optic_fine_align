@@ -85,7 +85,6 @@ class RS485Port:
             )
 
         GPIO.setwarnings(False)
-        GPIO.setmode(GPIO.BCM)
         last_err = None
         for _ in range(5):
             try:
@@ -93,6 +92,7 @@ class RS485Port:
             except Exception:
                 pass
             try:
+                GPIO.setmode(GPIO.BCM)
                 GPIO.setup(self.txden_pin, GPIO.OUT, initial=GPIO.HIGH)  # 默认接收
                 last_err = None
                 break
@@ -111,9 +111,19 @@ class RS485Port:
         return sum(data) & 0xFF
 
     def _set_send(self) -> None:
+        try:
+            if GPIO.getmode() is None:
+                GPIO.setmode(GPIO.BCM)
+        except Exception:
+            GPIO.setmode(GPIO.BCM)
         GPIO.output(self.txden_pin, GPIO.LOW)   # 参考你给的 Waveshare 示例：LOW=send
 
     def _set_recv(self) -> None:
+        try:
+            if GPIO.getmode() is None:
+                GPIO.setmode(GPIO.BCM)
+        except Exception:
+            GPIO.setmode(GPIO.BCM)
         GPIO.output(self.txden_pin, GPIO.HIGH)  # HIGH=read
 
     def close(self) -> None:
