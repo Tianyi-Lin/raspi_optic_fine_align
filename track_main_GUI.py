@@ -902,9 +902,31 @@ class BrushlessDualServoAdapter:
                 self._pending_tilt_deg = float(angle)
 
     def move_angle(self, wait=True):
-        self.pan_motor.move_to_deg(self._pending_pan_deg, max_speed_dps=self.pan_speed_dps)
-        time.sleep(0.005)
-        self.tilt_motor.move_to_deg(self._pending_tilt_deg, max_speed_dps=self.tilt_speed_dps)
+        if self.pan_id == self.tilt_id:
+            self.pan_motor.move_to_deg(self._pending_pan_deg, max_speed_dps=self.pan_speed_dps)
+        else:
+            errors = []
+
+            def _move_pan():
+                try:
+                    self.pan_motor.move_to_deg(self._pending_pan_deg, max_speed_dps=self.pan_speed_dps)
+                except Exception as exc:
+                    errors.append(exc)
+
+            def _move_tilt():
+                try:
+                    self.tilt_motor.move_to_deg(self._pending_tilt_deg, max_speed_dps=self.tilt_speed_dps)
+                except Exception as exc:
+                    errors.append(exc)
+
+            t1 = threading.Thread(target=_move_pan, daemon=True)
+            t2 = threading.Thread(target=_move_tilt, daemon=True)
+            t1.start()
+            t2.start()
+            t1.join()
+            t2.join()
+            if errors:
+                raise errors[0]
         if wait:
             time.sleep(0.01)
 
@@ -3722,13 +3744,11 @@ class CircleTrackerGUI:
                     target_h = max(120, target_h)
                     panel_w = max(80, target_w // 2)
                     panel_h = max(60, target_h // 2)
-                    sx = panel_w / float(w)
-                    sy = panel_h / float(h)
 
-                    main_panel = cv2.resize(frame_rgb_disp, (panel_w, panel_h), interpolation=cv2.INTER_AREA)
+                    main_panel = self._resize_crop(frame_rgb_disp, panel_w, panel_h)
 
-                    green_gray = cv2.resize(blurred_green, (panel_w, panel_h), interpolation=cv2.INTER_AREA)
-                    red_gray = cv2.resize(blurred_red, (panel_w, panel_h), interpolation=cv2.INTER_AREA)
+                    green_gray = self._resize_crop(blurred_green, panel_w, panel_h)
+                    red_gray = self._resize_crop(blurred_red, panel_w, panel_h)
                     green_panel = np.zeros((panel_h, panel_w, 3), dtype=np.uint8)
                     red_panel = np.zeros((panel_h, panel_w, 3), dtype=np.uint8)
                     green_panel[:, :, 1] = green_gray
@@ -3736,27 +3756,10 @@ class CircleTrackerGUI:
 
                     if self.laser_align_mode.get():
                         _, binary = cv2.threshold(blurred_red, laser_threshold, 255, cv2.THRESH_BINARY)
-                        bin_gray = cv2.resize(binary, (panel_w, panel_h), interpolation=cv2.INTER_NEAREST)
+                        bin_gray = self._resize_crop(binary, panel_w, panel_h, interpolation_down=cv2.INTER_NEAREST, interpolation_up=cv2.INTER_NEAREST)
                         bin_panel = cv2.cvtColor(bin_gray, cv2.COLOR_GRAY2RGB)
                     else:
                         bin_panel = np.zeros((panel_h, panel_w, 3), dtype=np.uint8)
-
-                    if detection is not None:
-                        x, y, r = detection
-                        x, y, r = int(round(x * sx)), int(round(y * sy)), int(round(r * (sx + sy) * 0.5))
-                        cv2.circle(main_panel, (x, y), 3, (0, 255, 0), -1)
-                        cv2.circle(main_panel, (x, y), max(1, r), (255, 0, 0), 2)
-                        cv2.circle(green_panel, (x, y), 3, (255, 0, 0), -1)
-                        cv2.circle(red_panel, (x, y), 3, (255, 255, 255), -1)
-
-                    if laser_spot_display is not None:
-                        lx, ly = int(round(laser_spot_display[0] * sx)), int(round(laser_spot_display[1] * sy))
-                        cv2.line(main_panel, (lx - 10, ly), (lx + 10, ly), (255, 255, 0), 2)
-                        cv2.line(main_panel, (lx, ly - 10), (lx, ly + 10), (255, 255, 0), 2)
-                        cv2.line(green_panel, (lx - 10, ly), (lx + 10, ly), (255, 255, 0), 2)
-                        cv2.line(green_panel, (lx, ly - 10), (lx, ly + 10), (255, 255, 0), 2)
-                        cv2.line(red_panel, (lx - 10, ly), (lx + 10, ly), (255, 255, 0), 2)
-                        cv2.line(red_panel, (lx, ly - 10), (lx, ly + 10), (255, 255, 0), 2)
 
                     cv2.putText(main_panel, "Main", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
                     cv2.putText(green_panel, "Green", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
@@ -3766,8 +3769,6 @@ class CircleTrackerGUI:
                     top_row = np.hstack((main_panel, green_panel))
                     bottom_row = np.hstack((red_panel, bin_panel))
                     frame_rgb_show = np.vstack((top_row, bottom_row))
-                    if frame_rgb_show.shape[1] != target_w or frame_rgb_show.shape[0] != target_h:
-                        frame_rgb_show = cv2.resize(frame_rgb_show, (target_w, target_h), interpolation=cv2.INTER_AREA)
                 else:
                     frame_rgb_show = frame_rgb_disp
 
@@ -4586,19 +4587,22 @@ class CircleTrackerGUI:
             box_w, box_h = int(box[0]), int(box[1])
         if box_w < 64 or box_h < 64:
             return img_rgb
-        ih, iw = img_rgb.shape[:2]
+        return self._resize_crop(img_rgb, box_w, box_h)
+
+    def _resize_crop(self, img, out_w, out_h, interpolation_down=cv2.INTER_AREA, interpolation_up=cv2.INTER_LINEAR):
+        ih, iw = img.shape[:2]
         if iw <= 0 or ih <= 0:
-            return img_rgb
-        if iw == box_w and ih == box_h:
-            return img_rgb
-        scale = max(box_w / float(iw), box_h / float(ih))
+            return img
+        if iw == out_w and ih == out_h:
+            return img
+        scale = max(out_w / float(iw), out_h / float(ih))
         new_w = max(1, int(round(iw * scale)))
         new_h = max(1, int(round(ih * scale)))
-        interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
-        resized = cv2.resize(img_rgb, (new_w, new_h), interpolation=interp)
-        x0 = max(0, (new_w - box_w) // 2)
-        y0 = max(0, (new_h - box_h) // 2)
-        return resized[y0 : y0 + box_h, x0 : x0 + box_w]
+        interp = interpolation_down if scale < 1.0 else interpolation_up
+        resized = cv2.resize(img, (new_w, new_h), interpolation=interp)
+        x0 = max(0, (new_w - out_w) // 2)
+        y0 = max(0, (new_h - out_h) // 2)
+        return resized[y0 : y0 + out_h, x0 : x0 + out_w]
 
     def on_close(self):
         if self._is_closing:
