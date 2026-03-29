@@ -138,6 +138,9 @@ def _vision_process_main(stop_event, settings_queue, status_queue, latest_det):
         "sensor_bit_depth": 10,
         "video_crop_ratio": 1.0,
         "preview_push_hz": 15,
+        "show_debug_panels": False,
+        "laser_align_mode": False,
+        "laser_threshold": 180,
         "ksize": 5,
         "min_dist": 80,
         "param1": 220,
@@ -237,13 +240,63 @@ def _vision_process_main(stop_event, settings_queue, status_queue, latest_det):
             try:
                 status_queue.put_nowait(("vision_hz", hz))
                 if bool(settings.get("multiprocess_preview", True)):
-                    preview = frame
-                    if det is not None:
-                        cv2.circle(preview, (int(det[0]), int(det[1])), int(det[2]), (0, 0, 255), 2)
-                        cv2.circle(preview, (int(det[0]), int(det[1])), 3, (0, 255, 0), -1)
-                    ph = max(120, int(preview.shape[0] * 0.5))
-                    pw = max(160, int(preview.shape[1] * 0.5))
-                    preview = cv2.resize(preview, (pw, ph), interpolation=cv2.INTER_AREA)
+                    show_debug = bool(settings.get("show_debug_panels", False))
+                    if show_debug:
+                        base = frame.copy()
+                        k = int(settings.get("ksize", 5))
+                        if k < 3:
+                            k = 3
+                        if k % 2 == 0:
+                            k += 1
+                        scale = 0.5
+                        h0, w0 = base.shape[:2]
+                        sw = max(2, int(round(w0 * scale)))
+                        sh = max(2, int(round(h0 * scale)))
+                        small = cv2.resize(base, (sw, sh), interpolation=cv2.INTER_AREA)
+                        side = max(2, min(sw, sh))
+                        x0 = max(0, (sw - side) // 2)
+                        y0 = max(0, (sh - side) // 2)
+                        main_panel = small[y0 : y0 + side, x0 : x0 + side].copy()
+                        green = small[:, :, 1]
+                        red = small[:, :, 2] if small.shape[2] >= 3 else small[:, :, 0]
+                        green = green[y0 : y0 + side, x0 : x0 + side]
+                        red = red[y0 : y0 + side, x0 : x0 + side]
+                        blurred_green = cv2.GaussianBlur(green, (k, k), 1)
+                        blurred_red = cv2.GaussianBlur(red, (k, k), 1)
+                        green_panel = np.zeros((side, side, 3), dtype=np.uint8)
+                        red_panel = np.zeros((side, side, 3), dtype=np.uint8)
+                        green_panel[:, :, 1] = blurred_green
+                        red_panel[:, :, 2] = blurred_red
+                        if bool(settings.get("laser_align_mode", False)):
+                            laser_threshold = int(settings.get("laser_threshold", 180))
+                            _, binary = cv2.threshold(blurred_red, laser_threshold, 255, cv2.THRESH_BINARY)
+                            bin_panel = cv2.cvtColor(binary, cv2.COLOR_GRAY2BGR)
+                        else:
+                            bin_panel = np.zeros((side, side, 3), dtype=np.uint8)
+                        if det is not None:
+                            dx = int(round(det[0] * scale)) - x0
+                            dy = int(round(det[1] * scale)) - y0
+                            dr = int(round(det[2] * scale))
+                            if 0 <= dx < side and 0 <= dy < side:
+                                cv2.circle(main_panel, (dx, dy), max(1, dr), (0, 0, 255), 2)
+                                cv2.circle(main_panel, (dx, dy), 2, (0, 255, 0), -1)
+                                cv2.circle(green_panel, (dx, dy), max(1, dr), (255, 0, 0), 2)
+                                cv2.circle(red_panel, (dx, dy), 2, (255, 255, 255), -1)
+                        cv2.putText(main_panel, "Main", (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                        cv2.putText(green_panel, "Green", (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                        cv2.putText(red_panel, "Red", (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                        cv2.putText(bin_panel, "Bin", (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 2)
+                        top = np.hstack((main_panel, green_panel))
+                        bottom = np.hstack((red_panel, bin_panel))
+                        preview = np.vstack((top, bottom))
+                    else:
+                        preview = frame.copy()
+                        if det is not None:
+                            cv2.circle(preview, (int(det[0]), int(det[1])), int(det[2]), (0, 0, 255), 2)
+                            cv2.circle(preview, (int(det[0]), int(det[1])), 3, (0, 255, 0), -1)
+                        ph = max(120, int(preview.shape[0] * 0.5))
+                        pw = max(160, int(preview.shape[1] * 0.5))
+                        preview = cv2.resize(preview, (pw, ph), interpolation=cv2.INTER_AREA)
                     ok, enc = cv2.imencode(".jpg", preview, [cv2.IMWRITE_JPEG_QUALITY, 70])
                     if ok:
                         status_queue.put_nowait(("preview_jpg", enc.tobytes()))
