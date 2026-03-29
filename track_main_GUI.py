@@ -905,7 +905,7 @@ class CircleTrackerGUI:
         self.tilt_id = tk.IntVar(value=2)
         self.control_period_ms = tk.IntVar(value=50)
         self.stab_period_ms = tk.IntVar(value=12)
-        self.multiprocess_mode = tk.BooleanVar(value=False)
+        self.multiprocess_mode = tk.BooleanVar(value=True)
         self.core_affinity_enabled = tk.BooleanVar(value=False)
         self.core_ui = tk.IntVar(value=0)
         self.core_control = tk.IntVar(value=1)
@@ -1099,7 +1099,7 @@ class CircleTrackerGUI:
             "tilt_id": 2,
             "control_period_ms": 50,
             "stab_period_ms": 12,
-            "multiprocess_mode": False,
+            "multiprocess_mode": True,
             "core_affinity_enabled": False,
             "core_ui": 0,
             "core_control": 1,
@@ -1324,7 +1324,7 @@ class CircleTrackerGUI:
             "tilt_id": 2,
             "control_period_ms": 50,
             "stab_period_ms": 12,
-            "multiprocess_mode": False,
+            "multiprocess_mode": True,
             "core_affinity_enabled": False,
             "core_ui": 0,
             "core_control": 1,
@@ -1945,7 +1945,7 @@ class CircleTrackerGUI:
         ttk.Checkbutton(tab_basic, text="启用俯仰", variable=self.tilt_enabled).grid(row=r, column=2, sticky="w", pady=(6, 0))
         ttk.Checkbutton(tab_basic, text="自动稳定", variable=self.auto_stabilize).grid(row=r, column=3, sticky="w", pady=(6, 0))
         r += 1
-        ttk.Checkbutton(tab_basic, text="多进程模式(重构中)", variable=self.multiprocess_mode).grid(row=r, column=0, columnspan=2, sticky="w", pady=(2, 0))
+        ttk.Checkbutton(tab_basic, text="多进程模式(仅多进程)", variable=self.multiprocess_mode, state=tk.DISABLED).grid(row=r, column=0, columnspan=2, sticky="w", pady=(2, 0))
         r += 1
         btns = ttk.Frame(tab_basic)
         btns.grid(row=r, column=0, columnspan=4, sticky="ew", pady=(10, 0))
@@ -2490,6 +2490,7 @@ class CircleTrackerGUI:
         if self.running:
             return
         try:
+            self.multiprocess_mode.set(True)
             self.stop_event.clear()
             self.detect_stop_event.clear()
             self.stab_stop_event.clear()
@@ -2497,23 +2498,10 @@ class CircleTrackerGUI:
             self.worker_error = None
             self._update_settings_from_vars()
             self._bind_current_thread_core(self.core_ui.get())
-            if self.multiprocess_mode.get():
-                self._start_multiprocess_runtime()
-                self.running = True
-                self.after_id = self.root.after(30, self._ui_loop)
-                self.status_text.set("多进程重构模式运行中")
-                return
-            self._ensure_camera()
+            self._start_multiprocess_runtime()
             self.running = True
-            
-            self.worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
-            self.worker_thread.start()
-            self.detect_thread = threading.Thread(target=self._detect_loop, daemon=True)
-            self.detect_thread.start()
-            self.stab_thread = threading.Thread(target=self._stabilization_loop, daemon=True)
-            self.stab_thread.start()
             self.after_id = self.root.after(30, self._ui_loop)
-            self.status_text.set("检测中（未跟踪，识别→控制为最新值单槽）")
+            self.status_text.set("多进程模式运行中")
         except Exception as exc:
             self.worker_error = str(exc)
             self.status_text.set(f"初始化失败: {exc}")
@@ -2545,7 +2533,7 @@ class CircleTrackerGUI:
         self.pid_x.reset()
         self.pid_y.reset()
         self.kalman = Kalman2D()
-        if self.multiprocess_mode.get() and self.mp_control_cmd_queue is not None:
+        if self.mp_control_cmd_queue is not None:
             try:
                 self.mp_control_cmd_queue.put_nowait(("recenter",))
             except Exception:
@@ -2553,8 +2541,6 @@ class CircleTrackerGUI:
         with self.detect_lock:
             self.latest_detection = None
             self.latest_detection_time = 0.0
-        if not self.multiprocess_mode.get():
-            self._center_servos()
         
     def _center_servos(self):
         """将舵机回正到0度"""
