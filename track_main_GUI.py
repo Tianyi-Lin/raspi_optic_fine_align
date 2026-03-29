@@ -71,46 +71,177 @@ def _set_current_process_affinity(core_spec):
         return False
 
 
-def _vision_process_main(stop_event, settings_queue, status_queue):
+def _detect_circle_np(frame_rgb, *, ksize, min_dist, param1, param2, min_radius, max_radius):
+    h, w = frame_rgb.shape[:2]
+    scale = 0.5
+    small_w = max(1, int(w * scale))
+    small_h = max(1, int(h * scale))
+    frame_small = cv2.resize(frame_rgb, (small_w, small_h), interpolation=cv2.INTER_AREA)
+    green = frame_small[:, :, 1]
+    k = int(ksize)
+    if k < 3:
+        k = 3
+    if k % 2 == 0:
+        k += 1
+    blurred_green = cv2.GaussianBlur(green, (k, k), 1)
+    min_dist_s = max(1, int(int(min_dist) * scale))
+    min_radius_s = max(0, int(int(min_radius) * scale))
+    max_radius_s = max(0, int(int(max_radius) * scale))
+    circles = cv2.HoughCircles(
+        blurred_green,
+        cv2.HOUGH_GRADIENT,
+        dp=1,
+        minDist=min_dist_s,
+        param1=int(param1),
+        param2=int(param2),
+        minRadius=min_radius_s,
+        maxRadius=max_radius_s,
+    )
+    if circles is None:
+        return None
+    circles = np.round(circles[0]).astype(int)
+    chosen = max(circles, key=lambda c: c[2])
+    x = int(round(chosen[0] / scale))
+    y = int(round(chosen[1] / scale))
+    r = int(round(chosen[2] / scale))
+    return x, y, r
+
+
+def _vision_process_main(stop_event, settings_queue, status_queue, latest_det):
     _set_current_process_affinity("1,2")
+    settings = {
+        "core_vision": "1,2",
+        "camera_raw_width": 640,
+        "camera_raw_height": 640,
+        "camera_fps": 60,
+        "ksize": 5,
+        "min_dist": 80,
+        "param1": 220,
+        "param2": 35,
+        "min_radius": 20,
+        "max_radius": 120,
+    }
+    picam2 = None
+    current_cfg = None
     last_ts = time.time()
+    last_fps_push = 0.0
+    frame_count = 0
     while not stop_event.is_set():
         try:
             while True:
                 msg = settings_queue.get_nowait()
-                if isinstance(msg, dict) and "core_vision" in msg:
-                    _set_current_process_affinity(msg.get("core_vision"))
+                if isinstance(msg, dict):
+                    settings.update(msg)
+                    if "core_vision" in msg:
+                        _set_current_process_affinity(msg.get("core_vision"))
         except Exception:
             pass
-        now = time.time()
-        hz = 1.0 / max(1e-3, (now - last_ts))
-        last_ts = now
+        cfg = (
+            max(160, int(settings.get("camera_raw_width", 640))),
+            max(120, int(settings.get("camera_raw_height", 640))),
+            max(5, int(settings.get("camera_fps", 60))),
+        )
+        if current_cfg != cfg:
+            try:
+                if picam2 is not None:
+                    picam2.stop()
+                    picam2.close()
+            except Exception:
+                pass
+            picam2 = None
+            try:
+                w, h, fps = cfg
+                picam2 = Picamera2()
+                picam2.start_preview(Preview.NULL)
+                frame_duration = int(1000000 / fps)
+                config = picam2.create_video_configuration(
+                    controls={"FrameDurationLimits": (frame_duration, frame_duration)}
+                )
+                config["main"]["format"] = "RGB888"
+                config["main"]["size"] = (w, h)
+                picam2.align_configuration(config)
+                picam2.configure(config)
+                picam2.start()
+                current_cfg = cfg
+            except Exception as exc:
+                try:
+                    status_queue.put_nowait(("vision_err", str(exc)))
+                except Exception:
+                    pass
+                time.sleep(0.2)
+                continue
         try:
-            status_queue.put_nowait(("vision_hz", hz))
+            frame = picam2.capture_array()
         except Exception:
-            pass
-        time.sleep(0.02)
+            time.sleep(0.01)
+            continue
+        det = _detect_circle_np(
+            frame,
+            ksize=settings.get("ksize", 5),
+            min_dist=settings.get("min_dist", 80),
+            param1=settings.get("param1", 220),
+            param2=settings.get("param2", 35),
+            min_radius=settings.get("min_radius", 20),
+            max_radius=settings.get("max_radius", 120),
+        )
+        ts = time.time()
+        if det is not None:
+            latest_det[0] = float(det[0])
+            latest_det[1] = float(det[1])
+            latest_det[2] = float(det[2])
+            latest_det[3] = 1.0
+            latest_det[4] = ts
+            latest_det[5] = 1.0
+        else:
+            latest_det[5] = 0.0
+            latest_det[4] = ts
+        frame_count += 1
+        if ts - last_fps_push >= 0.25:
+            hz = frame_count / max(1e-3, (ts - last_ts))
+            frame_count = 0
+            last_ts = ts
+            last_fps_push = ts
+            try:
+                status_queue.put_nowait(("vision_hz", hz))
+            except Exception:
+                pass
+    try:
+        if picam2 is not None:
+            picam2.stop()
+            picam2.close()
+    except Exception:
+        pass
 
 
-def _control_process_main(stop_event, settings_queue, status_queue):
+def _control_process_main(stop_event, settings_queue, status_queue, latest_det):
     _set_current_process_affinity("3")
+    settings = {"core_control": "3", "control_period_ms": 20}
     last_ts = time.time()
+    last_push = 0.0
     while not stop_event.is_set():
         try:
             while True:
                 msg = settings_queue.get_nowait()
-                if isinstance(msg, dict) and "core_control" in msg:
-                    _set_current_process_affinity(msg.get("core_control"))
+                if isinstance(msg, dict):
+                    settings.update(msg)
+                    if "core_control" in msg:
+                        _set_current_process_affinity(msg.get("core_control"))
         except Exception:
             pass
         now = time.time()
         hz = 1.0 / max(1e-3, (now - last_ts))
         last_ts = now
-        try:
-            status_queue.put_nowait(("control_hz", hz))
-        except Exception:
-            pass
-        time.sleep(0.02)
+        valid = latest_det[5] > 0.5
+        age = (now - float(latest_det[4])) if valid else -1.0
+        if now - last_push >= 0.25:
+            try:
+                status_queue.put_nowait(("control_hz", hz))
+                status_queue.put_nowait(("det_age", age))
+            except Exception:
+                pass
+            last_push = now
+        period_ms = max(1, int(settings.get("control_period_ms", 20)))
+        time.sleep(period_ms / 1000.0)
 
 
 class Kalman2D:
@@ -330,10 +461,12 @@ class CircleTrackerGUI:
         self.mp_vision_settings_queue = None
         self.mp_control_settings_queue = None
         self.mp_status_queue = None
+        self.mp_latest_detection = None
         self.mp_vision_proc = None
         self.mp_control_proc = None
         self.mp_control_hz = 0.0
         self.mp_vision_hz = 0.0
+        self.mp_det_age = -1.0
         self.stop_event = threading.Event()
         self.detect_stop_event = threading.Event()
         self.stab_stop_event = threading.Event()
@@ -611,6 +744,7 @@ class CircleTrackerGUI:
             "tilt_id": 2,
             "control_period_ms": 50,
             "stab_period_ms": 12,
+            "multiprocess_mode": False,
             "core_affinity_enabled": False,
             "core_ui": 0,
             "core_control": 1,
@@ -736,6 +870,7 @@ class CircleTrackerGUI:
                 "tilt_id": safe_int(self.tilt_id, "tilt_id"),
                 "control_period_ms": safe_int(self.control_period_ms, "control_period_ms"),
                 "stab_period_ms": safe_int(self.stab_period_ms, "stab_period_ms"),
+                "multiprocess_mode": safe_bool(self.multiprocess_mode),
                 "core_affinity_enabled": safe_bool(self.core_affinity_enabled),
                 "core_ui": safe_int(self.core_ui, "core_ui"),
                 "core_control": safe_int(self.core_control, "core_control"),
@@ -834,6 +969,7 @@ class CircleTrackerGUI:
             "tilt_id": 2,
             "control_period_ms": 50,
             "stab_period_ms": 12,
+            "multiprocess_mode": False,
             "core_affinity_enabled": False,
             "core_ui": 0,
             "core_control": 1,
@@ -942,6 +1078,7 @@ class CircleTrackerGUI:
             "tilt_id": safe_int(self.tilt_id, "tilt_id"),
             "control_period_ms": safe_int(self.control_period_ms, "control_period_ms"),
             "stab_period_ms": safe_int(self.stab_period_ms, "stab_period_ms"),
+            "multiprocess_mode": safe_bool(self.multiprocess_mode, "multiprocess_mode"),
             "core_affinity_enabled": safe_bool(self.core_affinity_enabled, "core_affinity_enabled"),
             "core_ui": safe_int(self.core_ui, "core_ui"),
             "core_control": safe_int(self.core_control, "core_control"),
@@ -1054,6 +1191,7 @@ class CircleTrackerGUI:
             "tilt_id": self.tilt_id,
             "control_period_ms": self.control_period_ms,
             "stab_period_ms": self.stab_period_ms,
+            "multiprocess_mode": self.multiprocess_mode,
             "core_affinity_enabled": self.core_affinity_enabled,
             "core_ui": self.core_ui,
             "core_control": self.core_control,
@@ -1166,6 +1304,7 @@ class CircleTrackerGUI:
                 "tilt_id": int(self.tilt_id.get()),
                 "control_period_ms": int(self.control_period_ms.get()),
                 "stab_period_ms": int(self.stab_period_ms.get()),
+                "multiprocess_mode": bool(self.multiprocess_mode.get()),
                 "core_affinity_enabled": bool(self.core_affinity_enabled.get()),
                 "core_ui": int(self.core_ui.get()),
                 "core_control": int(self.core_control.get()),
@@ -1282,6 +1421,7 @@ class CircleTrackerGUI:
             self.tilt_id,
             self.control_period_ms,
             self.stab_period_ms,
+            self.multiprocess_mode,
             self.core_affinity_enabled,
             self.core_ui,
             self.core_control,
@@ -1922,14 +2062,15 @@ class CircleTrackerGUI:
         self.mp_vision_settings_queue = self.mp_ctx.Queue(maxsize=4)
         self.mp_control_settings_queue = self.mp_ctx.Queue(maxsize=4)
         self.mp_status_queue = self.mp_ctx.Queue(maxsize=32)
+        self.mp_latest_detection = self.mp_ctx.Array("d", [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
         self.mp_vision_proc = self.mp_ctx.Process(
             target=_vision_process_main,
-            args=(self.mp_stop_event, self.mp_vision_settings_queue, self.mp_status_queue),
+            args=(self.mp_stop_event, self.mp_vision_settings_queue, self.mp_status_queue, self.mp_latest_detection),
             daemon=True,
         )
         self.mp_control_proc = self.mp_ctx.Process(
             target=_control_process_main,
-            args=(self.mp_stop_event, self.mp_control_settings_queue, self.mp_status_queue),
+            args=(self.mp_stop_event, self.mp_control_settings_queue, self.mp_status_queue, self.mp_latest_detection),
             daemon=True,
         )
         self.mp_vision_proc.start()
@@ -1964,6 +2105,7 @@ class CircleTrackerGUI:
         self.mp_vision_settings_queue = None
         self.mp_control_settings_queue = None
         self.mp_status_queue = None
+        self.mp_latest_detection = None
 
     def _push_multiprocess_settings(self):
         if self.mp_vision_settings_queue is None or self.mp_control_settings_queue is None:
@@ -2668,9 +2810,17 @@ class CircleTrackerGUI:
                         self.mp_vision_hz = float(val)
                     elif key == "control_hz":
                         self.mp_control_hz = float(val)
+                    elif key == "det_age":
+                        self.mp_det_age = float(val)
+                    elif key == "vision_err":
+                        self.worker_error = f"视觉进程错误: {val}"
             except Exception:
                 pass
-            self.status_text.set(f"多进程重构中 视觉Hz={self.mp_vision_hz:.1f} 控制Hz={self.mp_control_hz:.1f}")
+            if self.mp_latest_detection is not None and self.mp_latest_detection[5] > 0.5:
+                self.mp_det_age = max(0.0, time.time() - float(self.mp_latest_detection[4]))
+            self.status_text.set(
+                f"多进程重构中 视觉Hz={self.mp_vision_hz:.1f} 控制Hz={self.mp_control_hz:.1f} 检测Age={self.mp_det_age:.3f}s"
+            )
             self.after_id = self.root.after(80, self._ui_loop)
             return
         latest = None
