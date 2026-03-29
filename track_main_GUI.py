@@ -2839,14 +2839,28 @@ class CircleTrackerGUI:
         cam.pack(fill=tk.BOTH, expand=True)
         cam.columnconfigure(0, weight=1)
         rc = 0
-        self._grid_entry(cam, rc, 0, "采集宽度", self.camera_raw_width, width=10)
+        w_entry = self._grid_entry(cam, rc, 0, "采集宽度", self.camera_raw_width, width=10, return_widget=True)
         rc += 1
-        self._grid_entry(cam, rc, 0, "采集高度", self.camera_raw_height, width=10)
+        h_entry = self._grid_entry(cam, rc, 0, "采集高度", self.camera_raw_height, width=10, return_widget=True)
         rc += 1
         self._grid_entry(cam, rc, 0, "传感器BitDepth(10/12)", self.sensor_bit_depth, width=10)
         rc += 1
         rc = self._grid_slider(cam, rc, 0, "视频裁切比例", self.video_crop_ratio, 0.2, 1.0)
         ttk.Button(cam, text="应用分辨率", command=self._apply_camera_resolution).grid(row=rc, column=0, sticky="w", pady=(2, 8))
+        def _auto_apply_resolution(_event=None):
+            try:
+                self._apply_camera_resolution()
+            except Exception:
+                pass
+        try:
+            if w_entry is not None:
+                w_entry.bind("<Return>", _auto_apply_resolution)
+                w_entry.bind("<FocusOut>", _auto_apply_resolution)
+            if h_entry is not None:
+                h_entry.bind("<Return>", _auto_apply_resolution)
+                h_entry.bind("<FocusOut>", _auto_apply_resolution)
+        except Exception:
+            pass
         rc += 1
         rc = self._grid_slider(cam, rc, 0, "相机FPS", self.camera_fps, 10, 120)
         rc = self._grid_slider(cam, rc, 0, "GUI刷新Hz", self.ui_refresh_hz, 5, 60)
@@ -2903,9 +2917,12 @@ class CircleTrackerGUI:
         widget.see(tk.END)
         widget.configure(state=tk.DISABLED)
 
-    def _grid_entry(self, parent, row, col, text, var, width=10):
+    def _grid_entry(self, parent, row, col, text, var, width=10, return_widget=False):
         ttk.Label(parent, text=text).grid(row=row, column=col, sticky="w", padx=(0, 6), pady=(2, 2))
-        ttk.Entry(parent, textvariable=var, width=width).grid(row=row, column=col + 1, sticky="ew", pady=(2, 2))
+        entry = ttk.Entry(parent, textvariable=var, width=width)
+        entry.grid(row=row, column=col + 1, sticky="ew", pady=(2, 2))
+        if return_widget:
+            return entry
 
     def _grid_slider(self, parent, row, col, text, var, low, high, colspan=2, range_editable=False):
         frame = ttk.Frame(parent)
