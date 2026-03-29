@@ -4,6 +4,7 @@ import json
 import math
 import threading
 import queue
+import multiprocessing as mp
 import sys
 import importlib.util
 import tkinter as tk
@@ -32,6 +33,84 @@ def _load_module(name, path):
     sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def _parse_core_spec(spec):
+    cores = set()
+    text = str(spec).strip()
+    if not text:
+        return cores
+    for part in text.split(","):
+        p = part.strip()
+        if not p:
+            continue
+        if "-" in p:
+            a, b = p.split("-", 1)
+            start = max(0, int(a))
+            end = max(0, int(b))
+            if end < start:
+                start, end = end, start
+            cores.update(range(start, end + 1))
+        else:
+            cores.add(max(0, int(p)))
+    return cores
+
+
+def _set_current_process_affinity(core_spec):
+    try:
+        if os.name != "posix":
+            return False
+        if not hasattr(os, "sched_setaffinity"):
+            return False
+        cores = _parse_core_spec(core_spec)
+        if not cores:
+            return False
+        os.sched_setaffinity(0, cores)
+        return True
+    except Exception:
+        return False
+
+
+def _vision_process_main(stop_event, settings_queue, status_queue):
+    _set_current_process_affinity("1,2")
+    last_ts = time.time()
+    while not stop_event.is_set():
+        try:
+            while True:
+                msg = settings_queue.get_nowait()
+                if isinstance(msg, dict) and "core_vision" in msg:
+                    _set_current_process_affinity(msg.get("core_vision"))
+        except Exception:
+            pass
+        now = time.time()
+        hz = 1.0 / max(1e-3, (now - last_ts))
+        last_ts = now
+        try:
+            status_queue.put_nowait(("vision_hz", hz))
+        except Exception:
+            pass
+        time.sleep(0.02)
+
+
+def _control_process_main(stop_event, settings_queue, status_queue):
+    _set_current_process_affinity("3")
+    last_ts = time.time()
+    while not stop_event.is_set():
+        try:
+            while True:
+                msg = settings_queue.get_nowait()
+                if isinstance(msg, dict) and "core_control" in msg:
+                    _set_current_process_affinity(msg.get("core_control"))
+        except Exception:
+            pass
+        now = time.time()
+        hz = 1.0 / max(1e-3, (now - last_ts))
+        last_ts = now
+        try:
+            status_queue.put_nowait(("control_hz", hz))
+        except Exception:
+            pass
+        time.sleep(0.02)
 
 
 class Kalman2D:
@@ -246,6 +325,15 @@ class CircleTrackerGUI:
         self.worker_thread = None
         self.detect_thread = None
         self.stab_thread = None
+        self.mp_ctx = mp.get_context("spawn")
+        self.mp_stop_event = None
+        self.mp_vision_settings_queue = None
+        self.mp_control_settings_queue = None
+        self.mp_status_queue = None
+        self.mp_vision_proc = None
+        self.mp_control_proc = None
+        self.mp_control_hz = 0.0
+        self.mp_vision_hz = 0.0
         self.stop_event = threading.Event()
         self.detect_stop_event = threading.Event()
         self.stab_stop_event = threading.Event()
@@ -330,6 +418,7 @@ class CircleTrackerGUI:
         self.tilt_id = tk.IntVar(value=2)
         self.control_period_ms = tk.IntVar(value=50)
         self.stab_period_ms = tk.IntVar(value=12)
+        self.multiprocess_mode = tk.BooleanVar(value=False)
         self.core_affinity_enabled = tk.BooleanVar(value=False)
         self.core_ui = tk.IntVar(value=0)
         self.core_control = tk.IntVar(value=1)
@@ -1356,6 +1445,8 @@ class CircleTrackerGUI:
         ttk.Checkbutton(tab_basic, text="启用俯仰", variable=self.tilt_enabled).grid(row=r, column=2, sticky="w", pady=(6, 0))
         ttk.Checkbutton(tab_basic, text="自动稳定", variable=self.auto_stabilize).grid(row=r, column=3, sticky="w", pady=(6, 0))
         r += 1
+        ttk.Checkbutton(tab_basic, text="多进程模式(重构中)", variable=self.multiprocess_mode).grid(row=r, column=0, columnspan=2, sticky="w", pady=(2, 0))
+        r += 1
         btns = ttk.Frame(tab_basic)
         btns.grid(row=r, column=0, columnspan=4, sticky="ew", pady=(10, 0))
         btns.columnconfigure(0, weight=1)
@@ -1826,6 +1917,66 @@ class CircleTrackerGUI:
             self.core_stabilize.set(3)
         self.status_text.set("已应用CPU核预设")
 
+    def _start_multiprocess_runtime(self):
+        self.mp_stop_event = self.mp_ctx.Event()
+        self.mp_vision_settings_queue = self.mp_ctx.Queue(maxsize=4)
+        self.mp_control_settings_queue = self.mp_ctx.Queue(maxsize=4)
+        self.mp_status_queue = self.mp_ctx.Queue(maxsize=32)
+        self.mp_vision_proc = self.mp_ctx.Process(
+            target=_vision_process_main,
+            args=(self.mp_stop_event, self.mp_vision_settings_queue, self.mp_status_queue),
+            daemon=True,
+        )
+        self.mp_control_proc = self.mp_ctx.Process(
+            target=_control_process_main,
+            args=(self.mp_stop_event, self.mp_control_settings_queue, self.mp_status_queue),
+            daemon=True,
+        )
+        self.mp_vision_proc.start()
+        self.mp_control_proc.start()
+        settings = self._get_settings()
+        try:
+            self.mp_vision_settings_queue.put_nowait(settings)
+            self.mp_control_settings_queue.put_nowait(settings)
+        except Exception:
+            pass
+
+    def _stop_multiprocess_runtime(self):
+        if self.mp_stop_event is not None:
+            try:
+                self.mp_stop_event.set()
+            except Exception:
+                pass
+        for p in (self.mp_vision_proc, self.mp_control_proc):
+            if p is not None:
+                try:
+                    p.join(timeout=1.0)
+                except Exception:
+                    pass
+                try:
+                    if p.is_alive():
+                        p.terminate()
+                except Exception:
+                    pass
+        self.mp_vision_proc = None
+        self.mp_control_proc = None
+        self.mp_stop_event = None
+        self.mp_vision_settings_queue = None
+        self.mp_control_settings_queue = None
+        self.mp_status_queue = None
+
+    def _push_multiprocess_settings(self):
+        if self.mp_vision_settings_queue is None or self.mp_control_settings_queue is None:
+            return
+        s = self._get_settings()
+        for q in (self.mp_vision_settings_queue, self.mp_control_settings_queue):
+            try:
+                if q.full():
+                    q.get_nowait()
+                q.put_nowait(s)
+            except Exception:
+                pass
+
     def _start_runtime(self):
         if self.running:
             return
@@ -1837,6 +1988,12 @@ class CircleTrackerGUI:
             self.worker_error = None
             self._update_settings_from_vars()
             self._bind_current_thread_core(self.core_ui.get())
+            if self.multiprocess_mode.get():
+                self._start_multiprocess_runtime()
+                self.running = True
+                self.after_id = self.root.after(30, self._ui_loop)
+                self.status_text.set("多进程重构模式运行中")
+                return
             self._ensure_camera()
             self.running = True
             
@@ -1869,7 +2026,10 @@ class CircleTrackerGUI:
     def stop(self):
         self.tracking_active = False
         if self.running:
-            self.status_text.set("检测中（未跟踪）")
+            if self.multiprocess_mode.get():
+                self.status_text.set("多进程重构模式运行中")
+            else:
+                self.status_text.set("检测中（未跟踪）")
         # 停止时不再回正，直接原地保持
 
     def reset_axes(self):
@@ -2498,6 +2658,20 @@ class CircleTrackerGUI:
         if self.worker_error is not None:
             self.status_text.set(f"工作线程错误: {self.worker_error}")
             self.after_id = self.root.after(200, self._ui_loop)
+            return
+        if self.multiprocess_mode.get():
+            self._push_multiprocess_settings()
+            try:
+                while True:
+                    key, val = self.mp_status_queue.get_nowait()
+                    if key == "vision_hz":
+                        self.mp_vision_hz = float(val)
+                    elif key == "control_hz":
+                        self.mp_control_hz = float(val)
+            except Exception:
+                pass
+            self.status_text.set(f"多进程重构中 视觉Hz={self.mp_vision_hz:.1f} 控制Hz={self.mp_control_hz:.1f}")
+            self.after_id = self.root.after(80, self._ui_loop)
             return
         latest = None
         try:
@@ -3378,6 +3552,7 @@ class CircleTrackerGUI:
         self.stop_event.set()
         self.detect_stop_event.set()
         self.stab_stop_event.set()
+        self._stop_multiprocess_runtime()
         
         # 退出 GUI 前先走到关机姿态
         if self.servo is not None:
