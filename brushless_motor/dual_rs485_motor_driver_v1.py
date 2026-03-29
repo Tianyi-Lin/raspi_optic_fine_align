@@ -127,8 +127,8 @@ class RS485Port:
                 last_err = exc
                 try:
                     _gpio_ensure_mode_bcm()
-                    with _GPIO_MODE_LOCK:
-                        GPIO.cleanup()
+                    with _gpio_pin_lock(self.txden_pin):
+                        GPIO.cleanup(self.txden_pin)
                 except Exception:
                     pass
                 time.sleep(0.05)

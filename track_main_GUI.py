@@ -328,6 +328,7 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
     stab_pan_filtered = 0.0
     stab_tilt_filtered = 0.0
     next_servo_retry_ts = 0.0
+    servo_error_streak = 0
     last_ts = time.time()
     last_push = 0.0
     last_imu_push = 0.0
@@ -690,17 +691,21 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
                     ]
                 )
                 servo.move_angle(wait=False)
+                servo_error_streak = 0
             except Exception as exc:
+                servo_error_streak += 1
                 try:
-                    status_queue.put_nowait(("control_err", str(exc)))
+                    status_queue.put_nowait(("control_err", f"servo write[{servo_error_streak}]: {exc}"))
                 except Exception:
                     pass
-                try:
-                    servo.cleanup()
-                except Exception:
-                    pass
-                servo = None
-                servo_key = None
+                if servo_error_streak >= 3:
+                    try:
+                        servo.cleanup()
+                    except Exception:
+                        pass
+                    servo = None
+                    servo_key = None
+                    next_servo_retry_ts = time.time() + 0.5
         t_servo_write_end = time.time()
         if now - last_push >= 0.25:
             try:
@@ -930,6 +935,7 @@ class BrushlessDualServoAdapter:
             t1 = threading.Thread(target=_move_pan, daemon=True)
             t2 = threading.Thread(target=_move_tilt, daemon=True)
             t1.start()
+            time.sleep(0.002)
             t2.start()
             t1.join()
             t2.join()
