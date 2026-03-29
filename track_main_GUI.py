@@ -6,6 +6,7 @@ import threading
 import queue
 import multiprocessing as mp
 import sys
+import signal
 import importlib.util
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
@@ -1022,6 +1023,7 @@ class CircleTrackerGUI:
 
         self._autosave_after_id = None
         self._autosave_suppress = True
+        self._is_closing = False
 
         self._load_settings()
         init_w, init_h, _ = self._normalize_camera_resolution(self.camera_raw_width.get(), self.camera_raw_height.get())
@@ -4158,6 +4160,9 @@ class CircleTrackerGUI:
                 cv2.putText(frame, "DOWN LIMIT", (w//2-60, h-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
 
     def on_close(self):
+        if self._is_closing:
+            return
+        self._is_closing = True
         self.tracking_active = False
         self._save_settings()
         if self.multiprocess_mode.get() and self.mp_control_cmd_queue is not None:
@@ -4263,7 +4268,26 @@ def main():
     # 允许用户根据需要自适应调整
     root.resizable(True, True)
     app = CircleTrackerGUI(root)
-    root.mainloop()
+    def _handle_term(_signum, _frame):
+        try:
+            root.after(0, app.on_close)
+        except Exception:
+            try:
+                app.on_close()
+            except Exception:
+                pass
+    try:
+        signal.signal(signal.SIGINT, _handle_term)
+    except Exception:
+        pass
+    try:
+        signal.signal(signal.SIGTERM, _handle_term)
+    except Exception:
+        pass
+    try:
+        root.mainloop()
+    except KeyboardInterrupt:
+        app.on_close()
 
 
 if __name__ == "__main__":
