@@ -108,6 +108,25 @@ def _detect_circle_np(frame_rgb, *, ksize, min_dist, param1, param2, min_radius,
     return x, y, r
 
 
+def _center_crop_rect(full_w: int, full_h: int, ratio: float):
+    try:
+        r = float(ratio)
+    except Exception:
+        r = 1.0
+    r = max(0.05, min(1.0, r))
+    w = max(1, int(full_w))
+    h = max(1, int(full_h))
+    crop_w = max(32, int(round(w * r)))
+    crop_h = max(32, int(round(h * r)))
+    crop_w = min(crop_w, w)
+    crop_h = min(crop_h, h)
+    crop_w = max(2, (crop_w // 2) * 2)
+    crop_h = max(2, (crop_h // 2) * 2)
+    x0 = max(0, (w - crop_w) // 2)
+    y0 = max(0, (h - crop_h) // 2)
+    return x0, y0, crop_w, crop_h
+
+
 def _vision_process_main(stop_event, settings_queue, status_queue, latest_det):
     _set_current_process_affinity("1,2")
     settings = {
@@ -116,6 +135,8 @@ def _vision_process_main(stop_event, settings_queue, status_queue, latest_det):
         "camera_raw_height": 640,
         "camera_fps": 60,
         "multiprocess_preview": True,
+        "sensor_bit_depth": 10,
+        "video_crop_ratio": 1.0,
         "ksize": 5,
         "min_dist": 80,
         "param1": 220,
@@ -142,6 +163,7 @@ def _vision_process_main(stop_event, settings_queue, status_queue, latest_det):
             max(160, int(settings.get("camera_raw_width", 640))),
             max(120, int(settings.get("camera_raw_height", 640))),
             max(5, int(settings.get("camera_fps", 60))),
+            int(settings.get("sensor_bit_depth", 10)),
         )
         if current_cfg != cfg:
             try:
@@ -152,14 +174,15 @@ def _vision_process_main(stop_event, settings_queue, status_queue, latest_det):
                 pass
             picam2 = None
             try:
-                w, h, fps = cfg
+                w, h, fps, bit_depth = cfg
                 picam2 = Picamera2()
                 picam2.start_preview(Preview.NULL)
                 frame_duration = int(1000000 / fps)
                 config = picam2.create_video_configuration(
+                    sensor={"output_size": (w, h), "bit_depth": int(bit_depth)},
                     controls={"FrameDurationLimits": (frame_duration, frame_duration)}
                 )
-                config["main"]["format"] = "RGB888"
+                config["main"]["format"] = "BGR888"
                 config["main"]["size"] = (w, h)
                 picam2.align_configuration(config)
                 picam2.configure(config)
@@ -177,6 +200,11 @@ def _vision_process_main(stop_event, settings_queue, status_queue, latest_det):
         except Exception:
             time.sleep(0.01)
             continue
+        try:
+            x0, y0, cw, ch = _center_crop_rect(frame.shape[1], frame.shape[0], settings.get("video_crop_ratio", 1.0))
+            frame = frame[y0 : y0 + ch, x0 : x0 + cw]
+        except Exception:
+            pass
         det = _detect_circle_np(
             frame,
             ksize=settings.get("ksize", 5),
@@ -233,6 +261,8 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
         "control_period_ms": 20,
         "camera_raw_width": 640,
         "camera_raw_height": 640,
+        "sensor_bit_depth": 10,
+        "video_crop_ratio": 1.0,
         "track_enabled": True,
         "tracking_active": False,
         "pan_enabled": True,
@@ -277,6 +307,8 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
         "stab_pan_rate_limit_deg_per_s": 120.0,
         "stab_invert_x": False,
         "stab_invert_y": False,
+        "stab_enable_pitch": True,
+        "stab_enable_yaw": False,
     }
     pid_x = PID(kP=0.0075, kI=0.025, kD=0.000005, output_bound_low=-12, output_bound_high=12)
     pid_y = PID(kP=0.01, kI=0.02, kD=0.000005, output_bound_low=-12, output_bound_high=12)
@@ -509,8 +541,11 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
         if tracking_enabled and valid and age <= 0.3 and servo is not None:
             cx = float(latest_det[0])
             cy = float(latest_det[1])
-            target_x = float(settings.get("camera_raw_width", 640)) * 0.5
-            target_y = float(settings.get("camera_raw_height", 640)) * 0.5
+            full_w = int(settings.get("camera_raw_width", 640))
+            full_h = int(settings.get("camera_raw_height", 640))
+            _, _, eff_w, eff_h = _center_crop_rect(full_w, full_h, float(settings.get("video_crop_ratio", 1.0)))
+            target_x = float(eff_w) * 0.5
+            target_y = float(eff_h) * 0.5
             error_x = target_x - cx
             error_y = target_y - cy
             deadband = float(settings.get("deadband", 3.0))
@@ -543,10 +578,16 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
                 imu_age = max(0.0, now - float(imu_state.last_update))
                 pitch_err = ((imu_pitch - imu_zero_pitch + 180.0) % 360.0) - 180.0
                 yaw_err = ((imu_yaw - imu_zero_yaw + 180.0) % 360.0) - 180.0
+                enable_pitch = bool(settings.get("stab_enable_pitch", True))
+                enable_yaw = bool(settings.get("stab_enable_yaw", False)) and not bool(settings.get("imu_use_6axis", True))
                 if bool(settings.get("stab_invert_y", False)):
                     pitch_err = -pitch_err
                 if bool(settings.get("stab_invert_x", False)):
                     yaw_err = -yaw_err
+                if not enable_pitch:
+                    pitch_err = 0.0
+                if not enable_yaw:
+                    yaw_err = 0.0
                 pitch_deadband = max(0.0, float(settings.get("stab_pitch_deadband_deg", 0.6)))
                 yaw_deadband = max(0.0, float(settings.get("stab_yaw_deadband_deg", 0.6)))
                 if abs(pitch_err) <= pitch_deadband:
@@ -968,6 +1009,8 @@ class CircleTrackerGUI:
         self.camera_fps = tk.IntVar(value=60)
         self.camera_raw_width = tk.IntVar(value=640)
         self.camera_raw_height = tk.IntVar(value=640)
+        self.sensor_bit_depth = tk.IntVar(value=10)
+        self.video_crop_ratio = tk.DoubleVar(value=1.0)
         self.hough_crop_width = tk.IntVar(value=640)
         self.hough_crop_height = tk.IntVar(value=640)
         self.image_rotate_deg = tk.DoubleVar(value=0.0)
@@ -990,6 +1033,8 @@ class CircleTrackerGUI:
         self.stab_pan_rate_limit_deg_per_s = tk.DoubleVar(value=120.0)
         self.stab_invert_x = tk.BooleanVar(value=False)
         self.stab_invert_y = tk.BooleanVar(value=False)
+        self.stab_enable_pitch = tk.BooleanVar(value=True)
+        self.stab_enable_yaw = tk.BooleanVar(value=False)
         
         # 激光指示对准配置
         self.laser_align_mode = tk.BooleanVar(value=False) # False:盲对准, True:指示对准
@@ -1190,9 +1235,13 @@ class CircleTrackerGUI:
             "camera_fps": 60,
             "camera_raw_width": 640,
             "camera_raw_height": 640,
+            "sensor_bit_depth": 10,
+            "video_crop_ratio": 1.0,
             "hough_crop_width": 640,
             "hough_crop_height": 640,
             "image_rotate_deg": 0.0,
+            "show_debug_panels": False,
+            "aggressive_perf_mode": False,
             "show_debug_panels": False,
             "aggressive_perf_mode": False,
             "laser_align_mode": False,
@@ -1221,6 +1270,8 @@ class CircleTrackerGUI:
             "stab_pan_rate_limit_deg_per_s": 120.0,
             "stab_invert_x": False,
             "stab_invert_y": False,
+            "stab_enable_pitch": True,
+            "stab_enable_yaw": False,
             "imu_ax_offset_g": 0.0,
             "imu_ay_offset_g": 0.0,
             "imu_az_offset_g": 0.0,
@@ -1320,6 +1371,8 @@ class CircleTrackerGUI:
                 "camera_fps": safe_int(self.camera_fps, "camera_fps"),
                 "camera_raw_width": safe_int(self.camera_raw_width, "camera_raw_width"),
                 "camera_raw_height": safe_int(self.camera_raw_height, "camera_raw_height"),
+                "sensor_bit_depth": safe_int(self.sensor_bit_depth, "sensor_bit_depth"),
+                "video_crop_ratio": safe_float(self.video_crop_ratio, "video_crop_ratio"),
                 "hough_crop_width": safe_int(self.hough_crop_width, "hough_crop_width"),
                 "hough_crop_height": safe_int(self.hough_crop_height, "hough_crop_height"),
                 "image_rotate_deg": safe_float(self.image_rotate_deg, "image_rotate_deg"),
@@ -1347,6 +1400,8 @@ class CircleTrackerGUI:
                 "stab_pan_rate_limit_deg_per_s": safe_float(self.stab_pan_rate_limit_deg_per_s, "stab_pan_rate_limit_deg_per_s"),
                 "stab_invert_x": safe_bool(self.stab_invert_x),
                 "stab_invert_y": safe_bool(self.stab_invert_y),
+                "stab_enable_pitch": safe_bool(self.stab_enable_pitch),
+                "stab_enable_yaw": safe_bool(self.stab_enable_yaw),
         }
 
     def _get_settings(self):
@@ -1443,6 +1498,8 @@ class CircleTrackerGUI:
             "stab_pan_rate_limit_deg_per_s": 120.0,
             "stab_invert_x": False,
             "stab_invert_y": False,
+            "stab_enable_pitch": True,
+            "stab_enable_yaw": False,
         }
         def safe_int(var, key):
             try:
@@ -1528,6 +1585,8 @@ class CircleTrackerGUI:
             "camera_fps": safe_int(self.camera_fps, "camera_fps"),
             "camera_raw_width": safe_int(self.camera_raw_width, "camera_raw_width"),
             "camera_raw_height": safe_int(self.camera_raw_height, "camera_raw_height"),
+            "sensor_bit_depth": safe_int(self.sensor_bit_depth, "sensor_bit_depth"),
+            "video_crop_ratio": safe_float(self.video_crop_ratio, "video_crop_ratio"),
             "hough_crop_width": safe_int(self.hough_crop_width, "hough_crop_width"),
             "hough_crop_height": safe_int(self.hough_crop_height, "hough_crop_height"),
             "image_rotate_deg": safe_float(self.image_rotate_deg, "image_rotate_deg"),
@@ -1555,6 +1614,8 @@ class CircleTrackerGUI:
             "stab_pan_rate_limit_deg_per_s": safe_float(self.stab_pan_rate_limit_deg_per_s, "stab_pan_rate_limit_deg_per_s"),
             "stab_invert_x": safe_bool(self.stab_invert_x, "stab_invert_x"),
             "stab_invert_y": safe_bool(self.stab_invert_y, "stab_invert_y"),
+            "stab_enable_pitch": safe_bool(self.stab_enable_pitch, "stab_enable_pitch"),
+            "stab_enable_yaw": safe_bool(self.stab_enable_yaw, "stab_enable_yaw"),
             "hw_pan_min": safe_float(self.hw_pan_min, "hw_pan_min"),
             "hw_pan_max": safe_float(self.hw_pan_max, "hw_pan_max"),
             "hw_tilt_min": safe_float(self.hw_tilt_min, "hw_tilt_min"),
@@ -1640,6 +1701,8 @@ class CircleTrackerGUI:
             "y_bias": self.y_bias,
             "camera_raw_width": self.camera_raw_width,
             "camera_raw_height": self.camera_raw_height,
+            "sensor_bit_depth": self.sensor_bit_depth,
+            "video_crop_ratio": self.video_crop_ratio,
             "hough_crop_width": self.hough_crop_width,
             "hough_crop_height": self.hough_crop_height,
             "image_rotate_deg": self.image_rotate_deg,
@@ -1665,6 +1728,8 @@ class CircleTrackerGUI:
             "stab_pan_rate_limit_deg_per_s": self.stab_pan_rate_limit_deg_per_s,
             "stab_invert_x": self.stab_invert_x,
             "stab_invert_y": self.stab_invert_y,
+            "stab_enable_pitch": self.stab_enable_pitch,
+            "stab_enable_yaw": self.stab_enable_yaw,
         }
         for key, var in var_map.items():
             if key not in data:
@@ -1754,9 +1819,13 @@ class CircleTrackerGUI:
                 "camera_fps": int(self.camera_fps.get()),
                 "camera_raw_width": int(self.camera_raw_width.get()),
                 "camera_raw_height": int(self.camera_raw_height.get()),
+                "sensor_bit_depth": int(self.sensor_bit_depth.get()),
+                "video_crop_ratio": float(self.video_crop_ratio.get()),
                 "hough_crop_width": int(self.hough_crop_width.get()),
                 "hough_crop_height": int(self.hough_crop_height.get()),
                 "image_rotate_deg": float(self.image_rotate_deg.get()),
+                "show_debug_panels": bool(self.show_debug_panels.get()),
+                "aggressive_perf_mode": bool(self.aggressive_perf_mode.get()),
                 "show_debug_panels": bool(self.show_debug_panels.get()),
                 "aggressive_perf_mode": bool(self.aggressive_perf_mode.get()),
                 "laser_align_mode": bool(self.laser_align_mode.get()),
@@ -1781,6 +1850,8 @@ class CircleTrackerGUI:
                 "stab_pan_rate_limit_deg_per_s": float(self.stab_pan_rate_limit_deg_per_s.get()),
                 "stab_invert_x": bool(self.stab_invert_x.get()),
                 "stab_invert_y": bool(self.stab_invert_y.get()),
+                "stab_enable_pitch": bool(self.stab_enable_pitch.get()),
+                "stab_enable_yaw": bool(self.stab_enable_yaw.get()),
             }
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
@@ -1870,6 +1941,8 @@ class CircleTrackerGUI:
             self.y_bias,
             self.camera_raw_width,
             self.camera_raw_height,
+            self.sensor_bit_depth,
+            self.video_crop_ratio,
             self.hough_crop_width,
             self.hough_crop_height,
             self.image_rotate_deg,
@@ -1898,6 +1971,8 @@ class CircleTrackerGUI:
             self.stab_pan_rate_limit_deg_per_s,
             self.stab_invert_x,
             self.stab_invert_y,
+            self.stab_enable_pitch,
+            self.stab_enable_yaw,
             self.hw_pan_min,
             self.hw_pan_max,
             self.hw_tilt_min,
@@ -2059,42 +2134,44 @@ class CircleTrackerGUI:
         ttk.Button(imu_frame, text="应用算法", command=self._apply_imu_algorithm_mode).grid(row=2, column=1, sticky="ew", padx=(5, 0))
         ttk.Checkbutton(imu_frame, text="X反向(Yaw/水平)", variable=self.stab_invert_x).grid(row=2, column=2, sticky="w")
         ttk.Checkbutton(imu_frame, text="Y反向(Pitch/俯仰)", variable=self.stab_invert_y).grid(row=2, column=3, sticky="w")
-        ttk.Label(imu_frame, text="Pitch增益:").grid(row=3, column=0, sticky="e")
-        ttk.Entry(imu_frame, textvariable=self.stab_gain_pitch, width=10).grid(row=3, column=1, sticky="w", padx=5)
-        ttk.Label(imu_frame, text="Yaw增益:").grid(row=3, column=2, sticky="e")
-        ttk.Entry(imu_frame, textvariable=self.stab_gain_yaw, width=10).grid(row=3, column=3, sticky="w", padx=5)
-        ttk.Label(imu_frame, text="Pitch死区(°):").grid(row=4, column=0, sticky="e")
-        ttk.Entry(imu_frame, textvariable=self.stab_pitch_deadband_deg, width=10).grid(row=4, column=1, sticky="w", padx=5)
-        ttk.Label(imu_frame, text="Yaw死区(°):").grid(row=4, column=2, sticky="e")
-        ttk.Entry(imu_frame, textvariable=self.stab_yaw_deadband_deg, width=10).grid(row=4, column=3, sticky="w", padx=5)
-        ttk.Label(imu_frame, text="Pitch限幅(°):").grid(row=5, column=0, sticky="e")
-        ttk.Entry(imu_frame, textvariable=self.stab_tilt_limit_deg, width=10).grid(row=5, column=1, sticky="w", padx=5)
-        ttk.Label(imu_frame, text="Yaw限幅(°):").grid(row=5, column=2, sticky="e")
-        ttk.Entry(imu_frame, textvariable=self.stab_pan_limit_deg, width=10).grid(row=5, column=3, sticky="w", padx=5)
-        ttk.Label(imu_frame, text="Pitch平滑α:").grid(row=6, column=0, sticky="e")
-        ttk.Entry(imu_frame, textvariable=self.stab_tilt_alpha, width=10).grid(row=6, column=1, sticky="w", padx=5)
-        ttk.Label(imu_frame, text="Yaw平滑α:").grid(row=6, column=2, sticky="e")
-        ttk.Entry(imu_frame, textvariable=self.stab_pan_alpha, width=10).grid(row=6, column=3, sticky="w", padx=5)
-        ttk.Label(imu_frame, text="Pitch速度限幅(°/s):").grid(row=7, column=0, sticky="e")
-        ttk.Entry(imu_frame, textvariable=self.stab_tilt_rate_limit_deg_per_s, width=10).grid(row=7, column=1, sticky="w", padx=5)
-        ttk.Label(imu_frame, text="Yaw速度限幅(°/s):").grid(row=7, column=2, sticky="e")
-        ttk.Entry(imu_frame, textvariable=self.stab_pan_rate_limit_deg_per_s, width=10).grid(row=7, column=3, sticky="w", padx=5)
-        ttk.Button(imu_frame, text="IMU置零", command=self._zero_imu).grid(row=8, column=0, sticky="ew", pady=(8, 0))
-        ttk.Button(imu_frame, text="零偏设置", command=self._open_imu_offsets_dialog).grid(row=8, column=1, sticky="ew", pady=(8, 0), padx=(5, 0))
-        ttk.Label(imu_frame, text="Pitch:").grid(row=8, column=2, sticky="e", pady=(8, 0))
-        ttk.Label(imu_frame, textvariable=self.imu_status_pitch).grid(row=8, column=3, sticky="w", pady=(8, 0))
-        ttk.Label(imu_frame, text="Yaw:").grid(row=9, column=2, sticky="e")
-        ttk.Label(imu_frame, textvariable=self.imu_status_yaw).grid(row=9, column=3, sticky="w")
-        ttk.Label(imu_frame, text="Age:").grid(row=9, column=0, sticky="e")
-        ttk.Label(imu_frame, textvariable=self.imu_status_age).grid(row=9, column=1, sticky="w")
-        ttk.Label(imu_frame, text="基准Pitch:").grid(row=10, column=0, sticky="e")
-        ttk.Label(imu_frame, textvariable=self.imu_status_pitch_base).grid(row=10, column=1, sticky="w")
-        ttk.Label(imu_frame, text="基准Yaw:").grid(row=10, column=2, sticky="e")
-        ttk.Label(imu_frame, textvariable=self.imu_status_yaw_base).grid(row=10, column=3, sticky="w")
-        ttk.Label(imu_frame, text="ΔPitch:").grid(row=11, column=0, sticky="e")
-        ttk.Label(imu_frame, textvariable=self.imu_status_pitch_delta).grid(row=11, column=1, sticky="w")
-        ttk.Label(imu_frame, text="ΔYaw:").grid(row=11, column=2, sticky="e")
-        ttk.Label(imu_frame, textvariable=self.imu_status_yaw_delta).grid(row=11, column=3, sticky="w")
+        ttk.Checkbutton(imu_frame, text="稳定Pitch", variable=self.stab_enable_pitch).grid(row=3, column=0, columnspan=2, sticky="w", pady=(2, 4))
+        ttk.Checkbutton(imu_frame, text="稳定Yaw(建议9轴)", variable=self.stab_enable_yaw).grid(row=3, column=2, columnspan=2, sticky="w", pady=(2, 4))
+        ttk.Label(imu_frame, text="Pitch增益:").grid(row=4, column=0, sticky="e")
+        ttk.Entry(imu_frame, textvariable=self.stab_gain_pitch, width=10).grid(row=4, column=1, sticky="w", padx=5)
+        ttk.Label(imu_frame, text="Yaw增益:").grid(row=4, column=2, sticky="e")
+        ttk.Entry(imu_frame, textvariable=self.stab_gain_yaw, width=10).grid(row=4, column=3, sticky="w", padx=5)
+        ttk.Label(imu_frame, text="Pitch死区(°):").grid(row=5, column=0, sticky="e")
+        ttk.Entry(imu_frame, textvariable=self.stab_pitch_deadband_deg, width=10).grid(row=5, column=1, sticky="w", padx=5)
+        ttk.Label(imu_frame, text="Yaw死区(°):").grid(row=5, column=2, sticky="e")
+        ttk.Entry(imu_frame, textvariable=self.stab_yaw_deadband_deg, width=10).grid(row=5, column=3, sticky="w", padx=5)
+        ttk.Label(imu_frame, text="Pitch限幅(°):").grid(row=6, column=0, sticky="e")
+        ttk.Entry(imu_frame, textvariable=self.stab_tilt_limit_deg, width=10).grid(row=6, column=1, sticky="w", padx=5)
+        ttk.Label(imu_frame, text="Yaw限幅(°):").grid(row=6, column=2, sticky="e")
+        ttk.Entry(imu_frame, textvariable=self.stab_pan_limit_deg, width=10).grid(row=6, column=3, sticky="w", padx=5)
+        ttk.Label(imu_frame, text="Pitch平滑α:").grid(row=7, column=0, sticky="e")
+        ttk.Entry(imu_frame, textvariable=self.stab_tilt_alpha, width=10).grid(row=7, column=1, sticky="w", padx=5)
+        ttk.Label(imu_frame, text="Yaw平滑α:").grid(row=7, column=2, sticky="e")
+        ttk.Entry(imu_frame, textvariable=self.stab_pan_alpha, width=10).grid(row=7, column=3, sticky="w", padx=5)
+        ttk.Label(imu_frame, text="Pitch速度限幅(°/s):").grid(row=8, column=0, sticky="e")
+        ttk.Entry(imu_frame, textvariable=self.stab_tilt_rate_limit_deg_per_s, width=10).grid(row=8, column=1, sticky="w", padx=5)
+        ttk.Label(imu_frame, text="Yaw速度限幅(°/s):").grid(row=8, column=2, sticky="e")
+        ttk.Entry(imu_frame, textvariable=self.stab_pan_rate_limit_deg_per_s, width=10).grid(row=8, column=3, sticky="w", padx=5)
+        ttk.Button(imu_frame, text="IMU置零", command=self._zero_imu).grid(row=9, column=0, sticky="ew", pady=(8, 0))
+        ttk.Button(imu_frame, text="零偏设置", command=self._open_imu_offsets_dialog).grid(row=9, column=1, sticky="ew", pady=(8, 0), padx=(5, 0))
+        ttk.Label(imu_frame, text="Pitch:").grid(row=9, column=2, sticky="e", pady=(8, 0))
+        ttk.Label(imu_frame, textvariable=self.imu_status_pitch).grid(row=9, column=3, sticky="w", pady=(8, 0))
+        ttk.Label(imu_frame, text="Yaw:").grid(row=10, column=2, sticky="e")
+        ttk.Label(imu_frame, textvariable=self.imu_status_yaw).grid(row=10, column=3, sticky="w")
+        ttk.Label(imu_frame, text="Age:").grid(row=10, column=0, sticky="e")
+        ttk.Label(imu_frame, textvariable=self.imu_status_age).grid(row=10, column=1, sticky="w")
+        ttk.Label(imu_frame, text="基准Pitch:").grid(row=11, column=0, sticky="e")
+        ttk.Label(imu_frame, textvariable=self.imu_status_pitch_base).grid(row=11, column=1, sticky="w")
+        ttk.Label(imu_frame, text="基准Yaw:").grid(row=11, column=2, sticky="e")
+        ttk.Label(imu_frame, textvariable=self.imu_status_yaw_base).grid(row=11, column=3, sticky="w")
+        ttk.Label(imu_frame, text="ΔPitch:").grid(row=12, column=0, sticky="e")
+        ttk.Label(imu_frame, textvariable=self.imu_status_pitch_delta).grid(row=12, column=1, sticky="w")
+        ttk.Label(imu_frame, text="ΔYaw:").grid(row=12, column=2, sticky="e")
+        ttk.Label(imu_frame, textvariable=self.imu_status_yaw_delta).grid(row=12, column=3, sticky="w")
 
         pid_cols = ttk.Frame(tab_pid)
         pid_cols.pack(fill=tk.BOTH, expand=True)
@@ -2303,6 +2380,9 @@ class CircleTrackerGUI:
         rc += 1
         self._grid_entry(cam, rc, 0, "采集高度", self.camera_raw_height, width=10)
         rc += 1
+        self._grid_entry(cam, rc, 0, "传感器BitDepth(10/12)", self.sensor_bit_depth, width=10)
+        rc += 1
+        rc = self._grid_slider(cam, rc, 0, "视频裁切比例", self.video_crop_ratio, 0.2, 1.0)
         ttk.Button(cam, text="应用分辨率", command=self._apply_camera_resolution).grid(row=rc, column=0, sticky="w", pady=(2, 8))
         rc += 1
         rc = self._grid_slider(cam, rc, 0, "相机FPS", self.camera_fps, 10, 120)
@@ -2591,7 +2671,7 @@ class CircleTrackerGUI:
         self.tracking_active = False
         if self.running:
             if self.multiprocess_mode.get():
-                self.status_text.set("多进程重构模式运行中")
+                self.status_text.set("多进程运行中（未跟踪）")
             else:
                 self.status_text.set("检测中（未跟踪）")
         # 停止时不再回正，直接原地保持
@@ -2708,6 +2788,11 @@ class CircleTrackerGUI:
                         borderMode=cv2.BORDER_CONSTANT,
                         borderValue=(0, 0, 0),
                     )
+                try:
+                    x0, y0, cw, ch = _center_crop_rect(frame_rgb.shape[1], frame_rgb.shape[0], s.get("video_crop_ratio", 1.0))
+                    frame_rgb = frame_rgb[y0 : y0 + ch, x0 : x0 + cw]
+                except Exception:
+                    pass
                 h, w = frame_rgb.shape[:2]
                 center_x, center_y = w // 2, h // 2
                 with self.detect_lock:
@@ -3051,10 +3136,16 @@ class CircleTrackerGUI:
                     continue
                 pitch_err = self._angle_diff_deg(imu_state.pitch_deg, self.imu_zero_pitch)
                 yaw_err = self._angle_diff_deg(imu_state.yaw_deg, self.imu_zero_yaw)
+                enable_pitch = bool(s.get("stab_enable_pitch", True))
+                enable_yaw = bool(s.get("stab_enable_yaw", False)) and not bool(s.get("imu_use_6axis", True))
                 if bool(s.get("stab_invert_y", False)):
                     pitch_err = -pitch_err
                 if bool(s.get("stab_invert_x", False)):
                     yaw_err = -yaw_err
+                if not enable_pitch:
+                    pitch_err = 0.0
+                if not enable_yaw:
+                    yaw_err = 0.0
                 pitch_deadband = max(0.0, float(s.get("stab_pitch_deadband_deg", 0.6)))
                 if abs(pitch_err) < pitch_deadband:
                     pitch_err = 0.0
@@ -3295,8 +3386,9 @@ class CircleTrackerGUI:
             self.servo_status_pan.set(f"{self.mp_pan:.1f}")
             self.servo_status_tilt.set(f"{self.mp_tilt:.1f}")
             self.servo_status_voltage.set("-")
+            tracking_flag = int(bool(self.tracking_active) and bool(self.track_enabled.get()))
             self.status_text.set(
-                f"多进程重构中 V={int(vision_alive)} C={int(control_alive)} 视觉Hz={self.mp_vision_hz:.1f} 控制Hz={self.mp_control_hz:.1f} 检测Age={self.mp_det_age:.3f}s 水平={self.mp_pan:.2f} 俯仰={self.mp_tilt:.2f}"
+                f"多进程运行中 跟踪={tracking_flag} V={int(vision_alive)} C={int(control_alive)} 视觉Hz={self.mp_vision_hz:.1f} 控制Hz={self.mp_control_hz:.1f} 检测Age={self.mp_det_age:.3f}s 水平={self.mp_pan:.2f} 俯仰={self.mp_tilt:.2f}"
             )
             if self.mp_last_error:
                 self.status_text.set(self.status_text.get() + f" 错误={self.mp_last_error}")
@@ -3526,14 +3618,16 @@ class CircleTrackerGUI:
         self.picam2 = Picamera2()
         self.picam2.start_preview(Preview.NULL)
         framerate = settings.get("camera_fps", 60)
+        bit_depth = int(settings.get("sensor_bit_depth", 10))
         target_size = getattr(self, "camera_target_size", (640, 640))
         raw_w = max(160, int(target_size[0]))
         raw_h = max(120, int(target_size[1]))
         frame_duration = int(1000000 / framerate)
         config = self.picam2.create_video_configuration(
+            sensor={"output_size": (raw_w, raw_h), "bit_depth": int(bit_depth)},
             controls={"FrameDurationLimits": (frame_duration, frame_duration)}
         )
-        config["main"]["format"] = "RGB888"
+        config["main"]["format"] = "BGR888"
         config["main"]["size"] = (raw_w, raw_h)
         self.picam2.align_configuration(config)
         self.picam2.configure(config)
