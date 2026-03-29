@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import struct
 import time
+import threading
 from dataclasses import dataclass
 from typing import Optional, Dict, Any
 
@@ -35,6 +36,8 @@ try:
 except Exception:
     GPIO = None
     GPIO_BACKEND = None
+
+_GPIO_LOCK = threading.Lock()
 
 
 class RS485Error(Exception):
@@ -88,18 +91,21 @@ class RS485Port:
         last_err = None
         for _ in range(5):
             try:
-                GPIO.cleanup(self.txden_pin)
+                with _GPIO_LOCK:
+                    GPIO.cleanup(self.txden_pin)
             except Exception:
                 pass
             try:
-                GPIO.setmode(GPIO.BCM)
-                GPIO.setup(self.txden_pin, GPIO.OUT, initial=GPIO.HIGH)  # 默认接收
+                with _GPIO_LOCK:
+                    GPIO.setmode(GPIO.BCM)
+                    GPIO.setup(self.txden_pin, GPIO.OUT, initial=GPIO.HIGH)
                 last_err = None
                 break
             except Exception as exc:
                 last_err = exc
                 try:
-                    GPIO.cleanup()
+                    with _GPIO_LOCK:
+                        GPIO.cleanup()
                 except Exception:
                     pass
                 time.sleep(0.05)
@@ -111,20 +117,22 @@ class RS485Port:
         return sum(data) & 0xFF
 
     def _set_send(self) -> None:
-        try:
-            if GPIO.getmode() is None:
+        with _GPIO_LOCK:
+            try:
+                if GPIO.getmode() is None:
+                    GPIO.setmode(GPIO.BCM)
+            except Exception:
                 GPIO.setmode(GPIO.BCM)
-        except Exception:
-            GPIO.setmode(GPIO.BCM)
-        GPIO.output(self.txden_pin, GPIO.LOW)   # 参考你给的 Waveshare 示例：LOW=send
+            GPIO.output(self.txden_pin, GPIO.LOW)
 
     def _set_recv(self) -> None:
-        try:
-            if GPIO.getmode() is None:
+        with _GPIO_LOCK:
+            try:
+                if GPIO.getmode() is None:
+                    GPIO.setmode(GPIO.BCM)
+            except Exception:
                 GPIO.setmode(GPIO.BCM)
-        except Exception:
-            GPIO.setmode(GPIO.BCM)
-        GPIO.output(self.txden_pin, GPIO.HIGH)  # HIGH=read
+            GPIO.output(self.txden_pin, GPIO.HIGH)
 
     def close(self) -> None:
         try:
@@ -137,7 +145,8 @@ class RS485Port:
             pass
         try:
             if GPIO is not None:
-                GPIO.cleanup(self.txden_pin)
+                with _GPIO_LOCK:
+                    GPIO.cleanup(self.txden_pin)
         except Exception:
             pass
 

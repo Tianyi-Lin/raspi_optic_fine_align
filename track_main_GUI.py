@@ -284,6 +284,7 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
         "tilt_max": 360.0,
         "brushless_pan_speed_dps": 120.0,
         "brushless_tilt_speed_dps": 120.0,
+        "brushless_parallel_write": False,
         "imu_port": "/dev/ttyUSB0",
         "imu_baudrate": 9600,
         "imu_use_6axis": True,
@@ -470,6 +471,8 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
             try:
                 servo.pan_speed_dps = float(settings.get("brushless_pan_speed_dps", 120.0))
                 servo.tilt_speed_dps = float(settings.get("brushless_tilt_speed_dps", 120.0))
+                if hasattr(servo, "parallel_write"):
+                    servo.parallel_write = bool(settings.get("brushless_parallel_write", False))
             except Exception:
                 pass
         t_servo_end = time.time()
@@ -882,6 +885,7 @@ class BrushlessDualServoAdapter:
         )
         self._pending_pan_deg = 0.0
         self._pending_tilt_deg = 0.0
+        self.parallel_write = False
         self.pan_motor.motor_run()
         time.sleep(0.03)
         self.tilt_motor.motor_run()
@@ -905,28 +909,33 @@ class BrushlessDualServoAdapter:
         if self.pan_id == self.tilt_id:
             self.pan_motor.move_to_deg(self._pending_pan_deg, max_speed_dps=self.pan_speed_dps)
         else:
-            errors = []
+            if bool(getattr(self, "parallel_write", False)):
+                errors = []
 
-            def _move_pan():
-                try:
-                    self.pan_motor.move_to_deg(self._pending_pan_deg, max_speed_dps=self.pan_speed_dps)
-                except Exception as exc:
-                    errors.append(exc)
+                def _move_pan():
+                    try:
+                        self.pan_motor.move_to_deg(self._pending_pan_deg, max_speed_dps=self.pan_speed_dps)
+                    except Exception as exc:
+                        errors.append(RuntimeError(f"pan move failed: {exc}"))
 
-            def _move_tilt():
-                try:
-                    self.tilt_motor.move_to_deg(self._pending_tilt_deg, max_speed_dps=self.tilt_speed_dps)
-                except Exception as exc:
-                    errors.append(exc)
+                def _move_tilt():
+                    try:
+                        self.tilt_motor.move_to_deg(self._pending_tilt_deg, max_speed_dps=self.tilt_speed_dps)
+                    except Exception as exc:
+                        errors.append(RuntimeError(f"tilt move failed: {exc}"))
 
-            t1 = threading.Thread(target=_move_pan, daemon=True)
-            t2 = threading.Thread(target=_move_tilt, daemon=True)
-            t1.start()
-            t2.start()
-            t1.join()
-            t2.join()
-            if errors:
-                raise errors[0]
+                t1 = threading.Thread(target=_move_pan, daemon=True)
+                t2 = threading.Thread(target=_move_tilt, daemon=True)
+                t1.start()
+                t2.start()
+                t1.join()
+                t2.join()
+                if errors:
+                    raise errors[0]
+            else:
+                self.pan_motor.move_to_deg(self._pending_pan_deg, max_speed_dps=self.pan_speed_dps)
+                time.sleep(0.005)
+                self.tilt_motor.move_to_deg(self._pending_tilt_deg, max_speed_dps=self.tilt_speed_dps)
         if wait:
             time.sleep(0.01)
 
@@ -1063,6 +1072,7 @@ class CircleTrackerGUI:
         self.brushless_tilt_direction_sign = tk.IntVar(value=1)
         self.brushless_pan_speed_dps = tk.DoubleVar(value=120.0)
         self.brushless_tilt_speed_dps = tk.DoubleVar(value=120.0)
+        self.brushless_parallel_write = tk.BooleanVar(value=False)
         self.shutdown_pan_deg = tk.DoubleVar(value=0.0)
         self.shutdown_tilt_deg = tk.DoubleVar(value=0.0)
         self.shutdown_speed_dps = tk.DoubleVar(value=60.0)
@@ -1540,6 +1550,7 @@ class CircleTrackerGUI:
                 "brushless_tilt_direction_sign": safe_int(self.brushless_tilt_direction_sign, "brushless_tilt_direction_sign"),
                 "brushless_pan_speed_dps": safe_float(self.brushless_pan_speed_dps, "brushless_pan_speed_dps"),
                 "brushless_tilt_speed_dps": safe_float(self.brushless_tilt_speed_dps, "brushless_tilt_speed_dps"),
+                "brushless_parallel_write": safe_bool(self.brushless_parallel_write),
                 "shutdown_pan_deg": safe_float(self.shutdown_pan_deg, "shutdown_pan_deg"),
                 "shutdown_tilt_deg": safe_float(self.shutdown_tilt_deg, "shutdown_tilt_deg"),
                 "shutdown_speed_dps": safe_float(self.shutdown_speed_dps, "shutdown_speed_dps"),
@@ -1762,6 +1773,7 @@ class CircleTrackerGUI:
             "brushless_tilt_direction_sign": safe_int(self.brushless_tilt_direction_sign, "brushless_tilt_direction_sign"),
             "brushless_pan_speed_dps": safe_float(self.brushless_pan_speed_dps, "brushless_pan_speed_dps"),
             "brushless_tilt_speed_dps": safe_float(self.brushless_tilt_speed_dps, "brushless_tilt_speed_dps"),
+            "brushless_parallel_write": safe_bool(self.brushless_parallel_write, "brushless_parallel_write"),
             "shutdown_pan_deg": safe_float(self.shutdown_pan_deg, "shutdown_pan_deg"),
             "shutdown_tilt_deg": safe_float(self.shutdown_tilt_deg, "shutdown_tilt_deg"),
             "shutdown_speed_dps": safe_float(self.shutdown_speed_dps, "shutdown_speed_dps"),
@@ -2003,6 +2015,7 @@ class CircleTrackerGUI:
                 "brushless_tilt_direction_sign": int(self.brushless_tilt_direction_sign.get()),
                 "brushless_pan_speed_dps": float(self.brushless_pan_speed_dps.get()),
                 "brushless_tilt_speed_dps": float(self.brushless_tilt_speed_dps.get()),
+                "brushless_parallel_write": bool(self.brushless_parallel_write.get()),
                 "shutdown_pan_deg": float(self.shutdown_pan_deg.get()),
                 "shutdown_tilt_deg": float(self.shutdown_tilt_deg.get()),
                 "shutdown_speed_dps": float(self.shutdown_speed_dps.get()),
@@ -2151,6 +2164,7 @@ class CircleTrackerGUI:
             self.control_period_ms,
             self.stab_period_ms,
             self.control_debug_timing,
+            self.brushless_parallel_write,
             self.multiprocess_mode,
             self.core_affinity_enabled,
             self.core_ui,
@@ -2302,6 +2316,8 @@ class CircleTrackerGUI:
         r += 1
         self._grid_entry(tab_basic, r, 0, "水平速度dps", self.brushless_pan_speed_dps, width=8)
         self._grid_entry(tab_basic, r, 2, "俯仰速度dps", self.brushless_tilt_speed_dps, width=8)
+        r += 1
+        ttk.Checkbutton(tab_basic, text="无刷并行写(提Hz/可能不稳)", variable=self.brushless_parallel_write).grid(row=r, column=0, columnspan=2, sticky="w", pady=(2, 2))
         r += 1
         self._grid_entry(tab_basic, r, 0, "关机水平角", self.shutdown_pan_deg, width=8)
         self._grid_entry(tab_basic, r, 2, "关机俯仰角", self.shutdown_tilt_deg, width=8)
