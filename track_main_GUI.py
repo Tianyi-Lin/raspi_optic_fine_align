@@ -306,6 +306,30 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
                     elif cmd[0] == "zero_imu":
                         imu_zero_pitch = float(cmd[1]) if len(cmd) > 1 else 0.0
                         imu_zero_yaw = float(cmd[2]) if len(cmd) > 2 else 0.0
+                    elif cmd[0] == "zero_imu_request":
+                        if imu is not None:
+                            deadline = time.time() + 1.2
+                            pitches = []
+                            yaw_sin = 0.0
+                            yaw_cos = 0.0
+                            while time.time() < deadline and len(pitches) < 40 and not stop_event.is_set():
+                                try:
+                                    st = imu.get_state()
+                                    if st.last_update > 0:
+                                        pitches.append(float(st.pitch_deg))
+                                        yr = math.radians(float(st.yaw_deg))
+                                        yaw_sin += math.sin(yr)
+                                        yaw_cos += math.cos(yr)
+                                except Exception:
+                                    pass
+                                time.sleep(0.02)
+                            if len(pitches) >= 5:
+                                imu_zero_pitch = float(sum(pitches) / len(pitches))
+                                imu_zero_yaw = float(math.degrees(math.atan2(yaw_sin, yaw_cos)))
+                                try:
+                                    status_queue.put_nowait(("imu_zero_base", (imu_zero_pitch, imu_zero_yaw)))
+                                except Exception:
+                                    pass
                     elif cmd[0] == "jog":
                         if len(cmd) >= 3:
                             current_pan += float(cmd[1])
@@ -3180,6 +3204,13 @@ class CircleTrackerGUI:
                             self.imu_status_age.set(f"{float(val):.2f}s")
                         else:
                             self.imu_status_age.set("-")
+                    elif key == "imu_zero_base":
+                        self.imu_zero_pitch = float(val[0])
+                        self.imu_zero_yaw = float(val[1])
+                        self.imu_status_pitch_base.set(f"{self.imu_zero_pitch:+.2f}")
+                        self.imu_status_yaw_base.set(f"{self.imu_zero_yaw:+.2f}")
+                        self.imu_status_pitch_delta.set("+0.00")
+                        self.imu_status_yaw_delta.set("+0.00")
                     elif key == "preview_jpg":
                         self.mp_preview_jpg = val
             except Exception:
@@ -3503,6 +3534,15 @@ class CircleTrackerGUI:
         self.imu = None
 
     def _zero_imu(self):
+        if self.multiprocess_mode.get():
+            if self.mp_control_cmd_queue is not None:
+                try:
+                    self.mp_control_cmd_queue.put_nowait(("zero_imu_request",))
+                    self.status_text.set("多进程IMU置零请求已发送")
+                except Exception as exc:
+                    self.worker_error = str(exc)
+                    self.status_text.set(f"IMU置零请求失败: {exc}")
+            return
         try:
             self._ensure_imu()
         except Exception as exc:
@@ -3574,6 +3614,10 @@ class CircleTrackerGUI:
         return w_aligned, h_aligned, (w_aligned != w or h_aligned != h)
 
     def _apply_imu_output_rate(self):
+        if self.multiprocess_mode.get():
+            self._push_multiprocess_settings()
+            self.status_text.set(f"多进程已应用IMU输出速率: {int(self.imu_output_hz.get())}Hz")
+            return
         try:
             self._ensure_imu()
             hz = int(self.imu_output_hz.get())
@@ -3584,6 +3628,10 @@ class CircleTrackerGUI:
             self.status_text.set(f"IMU配置失败: {exc}")
 
     def _apply_imu_algorithm_mode(self):
+        if self.multiprocess_mode.get():
+            self._push_multiprocess_settings()
+            self.status_text.set("多进程已应用IMU算法模式")
+            return
         try:
             self._ensure_imu()
             use_6axis = bool(self.imu_use_6axis.get())
@@ -3594,6 +3642,10 @@ class CircleTrackerGUI:
             self.status_text.set(f"IMU配置失败: {exc}")
 
     def _apply_imu_baudrate(self):
+        if self.multiprocess_mode.get():
+            self._push_multiprocess_settings()
+            self.status_text.set(f"多进程已应用IMU波特率: {int(self.imu_baudrate.get())}")
+            return
         try:
             self._ensure_imu()
             baud = int(self.imu_baudrate.get())
@@ -3604,6 +3656,10 @@ class CircleTrackerGUI:
             self.status_text.set(f"IMU配置失败: {exc}")
 
     def _apply_imu_offsets(self):
+        if self.multiprocess_mode.get():
+            self._push_multiprocess_settings()
+            self.status_text.set("多进程已应用IMU零偏参数")
+            return
         try:
             self._ensure_imu()
             az_offset = float(self.imu_az_offset_g.get())
@@ -3632,6 +3688,9 @@ class CircleTrackerGUI:
             self.status_text.set(f"IMU零偏写入失败: {exc}")
 
     def _sample_fill_imu_offsets_flat(self):
+        if self.multiprocess_mode.get():
+            self.status_text.set("多进程模式下请先停止多进程再执行静置采样")
+            return
         try:
             self._ensure_imu()
         except Exception as exc:
