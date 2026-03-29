@@ -868,38 +868,57 @@ class BrushlessDualServoAdapter:
         self.tilt_id = int(tilt_id)
         self.pan_speed_dps = float(pan_speed_dps)
         self.tilt_speed_dps = float(tilt_speed_dps)
-        self.pan_motor = motor_cls(
-            motor_config_cls(
-                name="yaw",
-                motor_id=int(pan_id),
-                dev=str(pan_dev),
-                baudrate=int(pan_baudrate),
-                txden_pin=int(pan_txden),
-                direction_sign=int(pan_direction_sign),
-                default_speed_dps=float(pan_speed_dps),
-                min_deg=float(pan_min_deg),
-                max_deg=float(pan_max_deg),
-            )
-        )
-        self.tilt_motor = motor_cls(
-            motor_config_cls(
-                name="pitch",
-                motor_id=int(tilt_id),
-                dev=str(tilt_dev),
-                baudrate=int(tilt_baudrate),
-                txden_pin=int(tilt_txden),
-                direction_sign=int(tilt_direction_sign),
-                default_speed_dps=float(tilt_speed_dps),
-                min_deg=float(tilt_min_deg),
-                max_deg=float(tilt_max_deg),
-            )
-        )
+        self._motor_config_cls = motor_config_cls
+        self._motor_cls = motor_cls
+        self._pan_cfg = {
+            "name": "yaw",
+            "motor_id": int(pan_id),
+            "dev": str(pan_dev),
+            "baudrate": int(pan_baudrate),
+            "txden_pin": int(pan_txden),
+            "direction_sign": int(pan_direction_sign),
+            "default_speed_dps": float(pan_speed_dps),
+            "min_deg": float(pan_min_deg),
+            "max_deg": float(pan_max_deg),
+        }
+        self._tilt_cfg = {
+            "name": "pitch",
+            "motor_id": int(tilt_id),
+            "dev": str(tilt_dev),
+            "baudrate": int(tilt_baudrate),
+            "txden_pin": int(tilt_txden),
+            "direction_sign": int(tilt_direction_sign),
+            "default_speed_dps": float(tilt_speed_dps),
+            "min_deg": float(tilt_min_deg),
+            "max_deg": float(tilt_max_deg),
+        }
+        self.pan_motor = self._motor_cls(self._motor_config_cls(**self._pan_cfg))
+        self.tilt_motor = self._motor_cls(self._motor_config_cls(**self._tilt_cfg))
         self._pending_pan_deg = 0.0
         self._pending_tilt_deg = 0.0
         self.parallel_write = False
         self.pan_motor.motor_run()
         time.sleep(0.03)
         self.tilt_motor.motor_run()
+
+    def _reset_axis_motor(self, axis: str):
+        if axis == "pan":
+            old = self.pan_motor
+            cfg = self._pan_cfg
+        else:
+            old = self.tilt_motor
+            cfg = self._tilt_cfg
+        try:
+            old.close()
+        except Exception:
+            pass
+        m = self._motor_cls(self._motor_config_cls(**cfg))
+        m.motor_run()
+        time.sleep(0.03)
+        if axis == "pan":
+            self.pan_motor = m
+        else:
+            self.tilt_motor = m
 
     def set_angles(self, angles):
         if self.pan_id == self.tilt_id:
@@ -918,19 +937,22 @@ class BrushlessDualServoAdapter:
 
     def move_angle(self, wait=True):
         if bool(getattr(self, "parallel_write", False)):
-            errors = []
+            pan_exc = None
+            tilt_exc = None
 
             def _move_pan():
+                nonlocal pan_exc
                 try:
                     self.pan_motor.move_to_deg(self._pending_pan_deg, max_speed_dps=self.pan_speed_dps)
                 except Exception as exc:
-                    errors.append(RuntimeError(f"pan move failed: {exc}"))
+                    pan_exc = exc
 
             def _move_tilt():
+                nonlocal tilt_exc
                 try:
                     self.tilt_motor.move_to_deg(self._pending_tilt_deg, max_speed_dps=self.tilt_speed_dps)
                 except Exception as exc:
-                    errors.append(RuntimeError(f"tilt move failed: {exc}"))
+                    tilt_exc = exc
 
             t1 = threading.Thread(target=_move_pan, daemon=True)
             t2 = threading.Thread(target=_move_tilt, daemon=True)
@@ -939,12 +961,24 @@ class BrushlessDualServoAdapter:
             t2.start()
             t1.join()
             t2.join()
-            if errors:
-                raise errors[0]
+            if pan_exc is not None:
+                self._reset_axis_motor("pan")
+            if tilt_exc is not None:
+                self._reset_axis_motor("tilt")
+            if pan_exc is not None or tilt_exc is not None:
+                raise RuntimeError(f"brushless move failed: pan={pan_exc} tilt={tilt_exc}")
         else:
-            self.pan_motor.move_to_deg(self._pending_pan_deg, max_speed_dps=self.pan_speed_dps)
+            try:
+                self.pan_motor.move_to_deg(self._pending_pan_deg, max_speed_dps=self.pan_speed_dps)
+            except Exception as exc:
+                self._reset_axis_motor("pan")
+                raise RuntimeError(f"brushless pan move failed: {exc}")
             time.sleep(0.005)
-            self.tilt_motor.move_to_deg(self._pending_tilt_deg, max_speed_dps=self.tilt_speed_dps)
+            try:
+                self.tilt_motor.move_to_deg(self._pending_tilt_deg, max_speed_dps=self.tilt_speed_dps)
+            except Exception as exc:
+                self._reset_axis_motor("tilt")
+                raise RuntimeError(f"brushless tilt move failed: {exc}")
         if wait:
             time.sleep(0.01)
 
@@ -2465,13 +2499,13 @@ class CircleTrackerGUI:
             pid_x_frame.columnconfigure(c, weight=1)
             pid_y_frame.columnconfigure(c, weight=1)
         row_x = 0
-        row_x = self._grid_slider(pid_x_frame, row_x, 0, "kP", self.kp_x, 0.0, 0.01)
-        row_x = self._grid_slider(pid_x_frame, row_x, 0, "kI", self.ki_x, 0.0, 0.01)
-        row_x = self._grid_slider(pid_x_frame, row_x, 0, "kD", self.kd_x, 0.0, 0.01)
+        row_x = self._grid_slider(pid_x_frame, row_x, 0, "kP", self.kp_x, 0.0, 0.01, range_editable=True)
+        row_x = self._grid_slider(pid_x_frame, row_x, 0, "kI", self.ki_x, 0.0, 0.01, range_editable=True)
+        row_x = self._grid_slider(pid_x_frame, row_x, 0, "kD", self.kd_x, 0.0, 0.01, range_editable=True)
         row_y = 0
-        row_y = self._grid_slider(pid_y_frame, row_y, 0, "kP", self.kp_y, 0.0, 0.01)
-        row_y = self._grid_slider(pid_y_frame, row_y, 0, "kI", self.ki_y, 0.0, 0.01)
-        row_y = self._grid_slider(pid_y_frame, row_y, 0, "kD", self.kd_y, 0.0, 0.01)
+        row_y = self._grid_slider(pid_y_frame, row_y, 0, "kP", self.kp_y, 0.0, 0.01, range_editable=True)
+        row_y = self._grid_slider(pid_y_frame, row_y, 0, "kI", self.ki_y, 0.0, 0.01, range_editable=True)
+        row_y = self._grid_slider(pid_y_frame, row_y, 0, "kD", self.kd_y, 0.0, 0.01, range_editable=True)
         common = ttk.LabelFrame(tab_pid, text="通用", padding=8)
         common.pack(fill=tk.X, pady=(10, 0))
         common.columnconfigure(0, weight=1)
@@ -2723,7 +2757,7 @@ class CircleTrackerGUI:
         ttk.Label(parent, text=text).grid(row=row, column=col, sticky="w", padx=(0, 6), pady=(2, 2))
         ttk.Entry(parent, textvariable=var, width=width).grid(row=row, column=col + 1, sticky="ew", pady=(2, 2))
 
-    def _grid_slider(self, parent, row, col, text, var, low, high, colspan=2):
+    def _grid_slider(self, parent, row, col, text, var, low, high, colspan=2, range_editable=False):
         frame = ttk.Frame(parent)
         frame.grid(row=row, column=col, columnspan=colspan, sticky="ew", pady=(2, 6), padx=(0, 6 if col == 0 and colspan == 1 else 0))
         frame.columnconfigure(0, weight=1)
@@ -2739,6 +2773,9 @@ class CircleTrackerGUI:
         scale = ttk.Scale(frame, from_=low, to=high, variable=var)
         scale.grid(row=1, column=0, sticky="ew")
 
+        low_val = float(low)
+        high_val = float(high)
+
         def _on_change(*_):
             if isinstance(var, tk.IntVar):
                 value_text.set(str(int(var.get())))
@@ -2749,28 +2786,31 @@ class CircleTrackerGUI:
 
         # 添加键盘方向键支持
         # 为了让小数步进更精细，整数步进保持1
-        if isinstance(var, tk.IntVar):
-            step = 1
-            big_step = max(1, int((high - low) / 10.0))
-        else:
-            # 对于小数，每次按键移动 1/200 的量，按上下键移动 1/20
-            step = (high - low) / 200.0
-            big_step = (high - low) / 20.0
+        def _calc_steps():
+            if isinstance(var, tk.IntVar):
+                step = 1
+                big_step = max(1, int((high_val - low_val) / 10.0))
+            else:
+                step = (high_val - low_val) / 200.0
+                big_step = (high_val - low_val) / 20.0
+            return step, big_step
+
+        step, big_step = _calc_steps()
 
         def _on_key(event):
             current = var.get()
             if event.keysym == "Left":
-                new_val = max(low, current - step)
+                new_val = max(low_val, current - step)
             elif event.keysym == "Right":
-                new_val = min(high, current + step)
+                new_val = min(high_val, current + step)
             elif event.keysym == "Down":
-                new_val = max(low, current - big_step)
+                new_val = max(low_val, current - big_step)
             elif event.keysym == "Up":
-                new_val = min(high, current + big_step)
+                new_val = min(high_val, current + big_step)
             elif event.keysym == "Home":
-                new_val = low
+                new_val = low_val
             elif event.keysym == "End":
-                new_val = high
+                new_val = high_val
             else:
                 return
             var.set(new_val)
@@ -2787,6 +2827,46 @@ class CircleTrackerGUI:
         # 必须允许scale获取焦点才能接收键盘事件
         scale.bind("<Button-1>", lambda e: scale.focus_set())
         scale.bind("<FocusIn>", lambda e: scale.focus_set())
+
+        if range_editable:
+            range_row = ttk.Frame(frame)
+            range_row.grid(row=2, column=0, sticky="ew", pady=(4, 0))
+            range_row.columnconfigure(1, weight=1)
+            range_row.columnconfigure(3, weight=1)
+            min_text = tk.StringVar(value=str(low_val))
+            max_text = tk.StringVar(value=str(high_val))
+            ttk.Label(range_row, text="min").grid(row=0, column=0, sticky="w")
+            e_min = ttk.Entry(range_row, textvariable=min_text, width=8)
+            e_min.grid(row=0, column=1, sticky="w", padx=(4, 12))
+            ttk.Label(range_row, text="max").grid(row=0, column=2, sticky="w")
+            e_max = ttk.Entry(range_row, textvariable=max_text, width=8)
+            e_max.grid(row=0, column=3, sticky="w", padx=(4, 0))
+
+            def _apply_range(*_):
+                nonlocal low_val, high_val, step, big_step
+                try:
+                    a = float(min_text.get())
+                    b = float(max_text.get())
+                except Exception:
+                    return
+                if b == a:
+                    return
+                if b < a:
+                    a, b = b, a
+                low_val = a
+                high_val = b
+                scale.configure(from_=low_val, to=high_val)
+                v = float(var.get())
+                if v < low_val:
+                    var.set(low_val)
+                elif v > high_val:
+                    var.set(high_val)
+                step, big_step = _calc_steps()
+
+            e_min.bind("<Return>", _apply_range)
+            e_max.bind("<Return>", _apply_range)
+            e_min.bind("<FocusOut>", _apply_range)
+            e_max.bind("<FocusOut>", _apply_range)
 
         return row + 1
 
