@@ -349,6 +349,8 @@ class CircleTrackerGUI:
         self.param2 = tk.IntVar(value=35)
         self.min_radius = tk.IntVar(value=20)
         self.max_radius = tk.IntVar(value=120)
+        self.detect_ema_enabled = tk.BooleanVar(value=True)
+        self.detect_ema_alpha = tk.DoubleVar(value=0.3)
         self.x_bias = tk.IntVar(value=0)
         self.y_bias = tk.IntVar(value=0)
         self.camera_fps = tk.IntVar(value=60)
@@ -415,7 +417,6 @@ class CircleTrackerGUI:
 
         # 用于平滑检测结果的EMA（指数移动平均）状态
         self.smoothed_detection = None
-        self.ema_alpha = 0.3  # 平滑系数，越小越平滑但延迟越大，越大响应越快但抖动越大
 
         self._autosave_after_id = None
         self._autosave_suppress = True
@@ -529,6 +530,8 @@ class CircleTrackerGUI:
             "param2": 35,
             "min_radius": 20,
             "max_radius": 120,
+            "detect_ema_enabled": True,
+            "detect_ema_alpha": 0.3,
             "x_bias": 0,
             "y_bias": 0,
             "camera_fps": 60,
@@ -650,6 +653,8 @@ class CircleTrackerGUI:
                 "param2": safe_int(self.param2, "param2"),
                 "min_radius": safe_int(self.min_radius, "min_radius"),
                 "max_radius": safe_int(self.max_radius, "max_radius"),
+                "detect_ema_enabled": safe_bool(self.detect_ema_enabled),
+                "detect_ema_alpha": safe_float(self.detect_ema_alpha, "detect_ema_alpha"),
                 "x_bias": safe_int(self.x_bias, "x_bias"),
                 "y_bias": safe_int(self.y_bias, "y_bias"),
                 "camera_fps": safe_int(self.camera_fps, "camera_fps"),
@@ -740,6 +745,8 @@ class CircleTrackerGUI:
             "param2": 35,
             "min_radius": 20,
             "max_radius": 120,
+            "detect_ema_enabled": True,
+            "detect_ema_alpha": 0.3,
             "x_bias": 0,
             "y_bias": 0,
             "camera_raw_width": 640,
@@ -840,6 +847,8 @@ class CircleTrackerGUI:
             "param2": safe_int(self.param2, "param2"),
             "min_radius": safe_int(self.min_radius, "min_radius"),
             "max_radius": safe_int(self.max_radius, "max_radius"),
+            "detect_ema_enabled": safe_bool(self.detect_ema_enabled, "detect_ema_enabled"),
+            "detect_ema_alpha": safe_float(self.detect_ema_alpha, "detect_ema_alpha"),
             "x_bias": safe_int(self.x_bias, "x_bias"),
             "y_bias": safe_int(self.y_bias, "y_bias"),
             "camera_fps": safe_int(self.camera_fps, "camera_fps"),
@@ -944,6 +953,8 @@ class CircleTrackerGUI:
             "param2": self.param2,
             "min_radius": self.min_radius,
             "max_radius": self.max_radius,
+            "detect_ema_enabled": self.detect_ema_enabled,
+            "detect_ema_alpha": self.detect_ema_alpha,
             "x_bias": self.x_bias,
             "y_bias": self.y_bias,
             "camera_raw_width": self.camera_raw_width,
@@ -1048,6 +1059,8 @@ class CircleTrackerGUI:
                 "param2": int(self.param2.get()),
                 "min_radius": int(self.min_radius.get()),
                 "max_radius": int(self.max_radius.get()),
+                "detect_ema_enabled": bool(self.detect_ema_enabled.get()),
+                "detect_ema_alpha": float(self.detect_ema_alpha.get()),
                 "x_bias": int(self.x_bias.get()),
                 "y_bias": int(self.y_bias.get()),
                 "camera_fps": int(self.camera_fps.get()),
@@ -1156,6 +1169,8 @@ class CircleTrackerGUI:
             self.param2,
             self.min_radius,
             self.max_radius,
+            self.detect_ema_enabled,
+            self.detect_ema_alpha,
             self.x_bias,
             self.y_bias,
             self.camera_raw_width,
@@ -1515,6 +1530,9 @@ class CircleTrackerGUI:
         rv = self._grid_slider(left_vis, rv, 0, "参数2", self.param2, 5, 200)
         rv = self._grid_slider(left_vis, rv, 0, "最小半径", self.min_radius, 1, 300)
         rv = self._grid_slider(left_vis, rv, 0, "最大半径", self.max_radius, 1, 300)
+        ttk.Checkbutton(left_vis, text="启用EMA平滑", variable=self.detect_ema_enabled).grid(row=rv, column=0, columnspan=2, sticky="w", pady=(2, 6))
+        rv += 1
+        rv = self._grid_slider(left_vis, rv, 0, "EMA系数α", self.detect_ema_alpha, 0.01, 1.0)
         rv2 = 0
         rv2 = self._grid_slider(right_vis, rv2, 0, "模糊核大小", self.ksize, 3, 19)
         ttk.Checkbutton(right_vis, text="显示四宫格调试(更耗性能)", variable=self.show_debug_panels).grid(row=rv2, column=0, columnspan=2, sticky="w", pady=(2, 6))
@@ -2304,14 +2322,18 @@ class CircleTrackerGUI:
                 
                 # 应用EMA低通滤波稳定检测结果
                 if detection is not None:
-                    if self.smoothed_detection is None:
-                        self.smoothed_detection = list(detection)
+                    if bool(s.get("detect_ema_enabled", True)):
+                        if self.smoothed_detection is None:
+                            self.smoothed_detection = list(detection)
+                        else:
+                            alpha = max(0.01, min(1.0, float(s.get("detect_ema_alpha", 0.3))))
+                            self.smoothed_detection[0] = alpha * detection[0] + (1 - alpha) * self.smoothed_detection[0]
+                            self.smoothed_detection[1] = alpha * detection[1] + (1 - alpha) * self.smoothed_detection[1]
+                            self.smoothed_detection[2] = alpha * detection[2] + (1 - alpha) * self.smoothed_detection[2]
+                        detection_to_save = tuple(self.smoothed_detection)
                     else:
-                        alpha = self.ema_alpha
-                        self.smoothed_detection[0] = alpha * detection[0] + (1 - alpha) * self.smoothed_detection[0]
-                        self.smoothed_detection[1] = alpha * detection[1] + (1 - alpha) * self.smoothed_detection[1]
-                        self.smoothed_detection[2] = alpha * detection[2] + (1 - alpha) * self.smoothed_detection[2]
-                    detection_to_save = tuple(self.smoothed_detection)
+                        self.smoothed_detection = None
+                        detection_to_save = detection
                 else:
                     self.smoothed_detection = None
                     detection_to_save = None
