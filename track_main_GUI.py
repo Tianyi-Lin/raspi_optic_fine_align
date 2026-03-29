@@ -308,7 +308,7 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
         "stab_invert_x": False,
         "stab_invert_y": False,
         "stab_enable_pitch": True,
-        "stab_enable_yaw": False,
+        "stab_enable_yaw": True,
     }
     pid_x = PID(kP=0.0075, kI=0.025, kD=0.000005, output_bound_low=-12, output_bound_high=12)
     pid_y = PID(kP=0.01, kI=0.02, kD=0.000005, output_bound_low=-12, output_bound_high=12)
@@ -602,7 +602,7 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
                 pitch_err = ((imu_pitch - imu_zero_pitch + 180.0) % 360.0) - 180.0
                 yaw_err = ((imu_yaw - imu_zero_yaw + 180.0) % 360.0) - 180.0
                 enable_pitch = bool(settings.get("stab_enable_pitch", True))
-                enable_yaw = bool(settings.get("stab_enable_yaw", False)) and not bool(settings.get("imu_use_6axis", True))
+                enable_yaw = bool(settings.get("stab_enable_yaw", False))
                 if bool(settings.get("stab_invert_y", False)):
                     pitch_err = -pitch_err
                 if bool(settings.get("stab_invert_x", False)):
@@ -623,7 +623,7 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
                     yaw_err = math.copysign(abs(yaw_err) - yaw_deadband, yaw_err)
                 tilt_limit = max(0.0, float(settings.get("stab_tilt_limit_deg", 8.0)))
                 pan_limit = max(0.0, float(settings.get("stab_pan_limit_deg", 8.0)))
-                stab_tilt_target = max(-tilt_limit, min(tilt_limit, -pitch_err * float(settings.get("stab_gain_pitch", 1.0))))
+                stab_tilt_target = max(-tilt_limit, min(tilt_limit, pitch_err * float(settings.get("stab_gain_pitch", 1.0))))
                 stab_pan_target = max(-pan_limit, min(pan_limit, -yaw_err * float(settings.get("stab_gain_yaw", 1.0))))
                 tilt_alpha = max(0.0, min(1.0, float(settings.get("stab_tilt_alpha", 0.35))))
                 pan_alpha = max(0.0, min(1.0, float(settings.get("stab_pan_alpha", 0.35))))
@@ -1077,7 +1077,7 @@ class CircleTrackerGUI:
         self.stab_invert_x = tk.BooleanVar(value=False)
         self.stab_invert_y = tk.BooleanVar(value=False)
         self.stab_enable_pitch = tk.BooleanVar(value=True)
-        self.stab_enable_yaw = tk.BooleanVar(value=False)
+        self.stab_enable_yaw = tk.BooleanVar(value=True)
         
         # 激光指示对准配置
         self.laser_align_mode = tk.BooleanVar(value=False) # False:盲对准, True:指示对准
@@ -1314,7 +1314,7 @@ class CircleTrackerGUI:
             "stab_invert_x": False,
             "stab_invert_y": False,
             "stab_enable_pitch": True,
-            "stab_enable_yaw": False,
+            "stab_enable_yaw": True,
             "imu_ax_offset_g": 0.0,
             "imu_ay_offset_g": 0.0,
             "imu_az_offset_g": 0.0,
@@ -2178,7 +2178,7 @@ class CircleTrackerGUI:
         ttk.Checkbutton(imu_frame, text="X反向(Yaw/水平)", variable=self.stab_invert_x).grid(row=2, column=2, sticky="w")
         ttk.Checkbutton(imu_frame, text="Y反向(Pitch/俯仰)", variable=self.stab_invert_y).grid(row=2, column=3, sticky="w")
         ttk.Checkbutton(imu_frame, text="稳定Pitch", variable=self.stab_enable_pitch).grid(row=3, column=0, columnspan=2, sticky="w", pady=(2, 4))
-        ttk.Checkbutton(imu_frame, text="稳定Yaw(建议9轴)", variable=self.stab_enable_yaw).grid(row=3, column=2, columnspan=2, sticky="w", pady=(2, 4))
+        ttk.Checkbutton(imu_frame, text="稳定Yaw", variable=self.stab_enable_yaw).grid(row=3, column=2, columnspan=2, sticky="w", pady=(2, 4))
         ttk.Label(imu_frame, text="Pitch增益:").grid(row=4, column=0, sticky="e")
         ttk.Entry(imu_frame, textvariable=self.stab_gain_pitch, width=10).grid(row=4, column=1, sticky="w", padx=5)
         ttk.Label(imu_frame, text="Yaw增益:").grid(row=4, column=2, sticky="e")
@@ -3194,7 +3194,7 @@ class CircleTrackerGUI:
                 pitch_err = self._angle_diff_deg(imu_state.pitch_deg, self.imu_zero_pitch)
                 yaw_err = self._angle_diff_deg(imu_state.yaw_deg, self.imu_zero_yaw)
                 enable_pitch = bool(s.get("stab_enable_pitch", True))
-                enable_yaw = bool(s.get("stab_enable_yaw", False)) and not bool(s.get("imu_use_6axis", True))
+                enable_yaw = bool(s.get("stab_enable_yaw", False))
                 if bool(s.get("stab_invert_y", False)):
                     pitch_err = -pitch_err
                 if bool(s.get("stab_invert_x", False)):
@@ -3215,7 +3215,7 @@ class CircleTrackerGUI:
                     yaw_err = math.copysign(abs(yaw_err) - yaw_deadband, yaw_err)
                 tilt_limit = max(0.0, float(s.get("stab_tilt_limit_deg", 8.0)))
                 pan_limit = max(0.0, float(s.get("stab_pan_limit_deg", 8.0)))
-                stab_tilt_target = -pitch_err * float(s.get("stab_gain_pitch", 1.0))
+                stab_tilt_target = pitch_err * float(s.get("stab_gain_pitch", 1.0))
                 stab_tilt_target = max(-tilt_limit, min(tilt_limit, stab_tilt_target))
                 stab_pan_target = -yaw_err * float(s.get("stab_gain_yaw", 1.0))
                 stab_pan_target = max(-pan_limit, min(pan_limit, stab_pan_target))
