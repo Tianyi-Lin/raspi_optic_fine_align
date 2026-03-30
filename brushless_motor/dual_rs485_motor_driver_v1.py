@@ -91,7 +91,13 @@ class RS485Port:
     def __init__(self, dev: str, txden_pin: int, baudrate: int = 1000000, timeout: float = 0.05):
         self.dev = dev
         self.txden_pin = txden_pin
+        self.baudrate = int(baudrate)
         self.timeout = timeout
+        self._rx_buffer = bytearray()
+        self._last_flush_ms = 0.0
+        self._last_flush_bytes = 0
+        self._last_send_ms = 0.0
+        self._last_reply_ms = 0.0
         self.ser = serial.Serial(
             port=dev,
             baudrate=baudrate,
@@ -167,71 +173,153 @@ class RS485Port:
             pass
 
     def flush_input(self) -> None:
-        self.ser.reset_input_buffer()
+        t0 = time.perf_counter()
+        dropped = len(self._rx_buffer)
+        self._rx_buffer.clear()
+        try:
+            while True:
+                waiting = int(getattr(self.ser, "in_waiting", 0) or 0)
+                if waiting <= 0:
+                    break
+                chunk = self.ser.read(waiting)
+                if not chunk:
+                    break
+                dropped += len(chunk)
+        except Exception:
+            self.ser.reset_input_buffer()
+        self._last_flush_ms = (time.perf_counter() - t0) * 1000.0
+        self._last_flush_bytes = int(dropped)
 
     def send_frame(self, cmd: int, motor_id: int, payload: bytes = b"") -> None:
+        t0 = time.perf_counter()
         header = bytes([0x3E, cmd & 0xFF, motor_id & 0xFF, len(payload) & 0xFF])
         cmd_sum = bytes([self.checksum(header)])
         frame = header + cmd_sum
         if payload:
             frame += payload + bytes([self.checksum(payload)])
 
-        self.flush_input()
+        if self._rx_buffer:
+            self.flush_input()
+        else:
+            try:
+                if int(getattr(self.ser, "in_waiting", 0) or 0) > 0:
+                    self.flush_input()
+            except Exception:
+                self.flush_input()
         self._set_send()
-        time.sleep(0.001)
+        time.sleep(0.00025)
         self.ser.write(frame)
         self.ser.flush()
-        time.sleep(0.001)
+        time.sleep(0.00025)
         self._set_recv()
+        self._last_send_ms = (time.perf_counter() - t0) * 1000.0
 
     def read_exact(self, n: int) -> bytes:
-        data = self.ser.read(n)
-        if len(data) != n:
-            raise ResponseError(f"{self.dev} 读取长度不足: 期望 {n} 字节, 实际 {len(data)} 字节")
+        deadline = time.perf_counter() + max(0.02, self.timeout * 3.0)
+        return self._read_exact_until(n, deadline)
+
+    def _fill_rx_buffer_until(self, min_len: int, deadline: float) -> None:
+        target_len = max(0, int(min_len))
+        while len(self._rx_buffer) < target_len and time.perf_counter() < deadline:
+            waiting = 0
+            try:
+                waiting = int(getattr(self.ser, "in_waiting", 0) or 0)
+            except Exception:
+                waiting = 0
+            to_read = waiting if waiting > 0 else 1
+            chunk = self.ser.read(to_read)
+            if chunk:
+                self._rx_buffer.extend(chunk)
+
+    def _read_exact_until(self, n: int, deadline: float) -> bytes:
+        self._fill_rx_buffer_until(n, deadline)
+        if len(self._rx_buffer) < n:
+            raise ResponseError(f"{self.dev} 读取长度不足: 期望 {n} 字节, 实际 {len(self._rx_buffer)} 字节")
+        data = bytes(self._rx_buffer[:n])
+        del self._rx_buffer[:n]
         return data
 
-    def _read_header_synced(self) -> bytes:
-        deadline = time.time() + max(0.02, self.timeout * 3.0)
-        while time.time() < deadline:
-            b0 = self.ser.read(1)
-            if not b0:
-                continue
-            if b0[0] != 0x3E:
-                continue
-            rest = self.ser.read(4)
-            if len(rest) != 4:
-                raise ResponseError(f"{self.dev} 回复头部不完整")
-            return b0 + rest
-        raise ResponseError(f"{self.dev} 回复超时或未找到帧头")
+    def _extract_frame_from_buffer(self) -> Optional[bytes]:
+        while self._rx_buffer and self._rx_buffer[0] != 0x3E:
+            del self._rx_buffer[0]
+        if len(self._rx_buffer) < 5:
+            return None
+        data_len = int(self._rx_buffer[3])
+        total_len = 5 + data_len + (1 if data_len > 0 else 0)
+        if len(self._rx_buffer) < total_len:
+            return None
+        frame = bytes(self._rx_buffer[:total_len])
+        del self._rx_buffer[:total_len]
+        return frame
+
+    def _read_frame_synced(self, deadline: float) -> bytes:
+        last_error = None
+        while time.perf_counter() < deadline:
+            frame = self._extract_frame_from_buffer()
+            if frame is not None:
+                return frame
+            try:
+                self._fill_rx_buffer_until(len(self._rx_buffer) + 1, deadline)
+            except Exception as exc:
+                last_error = exc
+        if last_error is not None:
+            raise ResponseError(f"{self.dev} 回复读取失败: {last_error}")
+        raise ResponseError(f"{self.dev} 回复超时或未找到完整帧")
 
     def read_reply(self, expected_cmd: int, expected_id: int) -> bytes:
         """
         返回 payload 原始数据（不含 DATA_SUM）
         """
-        header = self._read_header_synced()
-        cmd = header[1]
-        motor_id = header[2]
-        data_len = header[3]
-        cmd_sum = header[4]
+        t0 = time.perf_counter()
+        deadline = time.perf_counter() + max(0.02, self.timeout * 3.0)
+        last_error = None
+        while time.perf_counter() < deadline:
+            frame = self._read_frame_synced(deadline)
+            header = frame[:5]
+            cmd = header[1]
+            motor_id = header[2]
+            data_len = header[3]
+            cmd_sum = header[4]
 
-        if self.checksum(header[:4]) != cmd_sum:
-            raise ChecksumError(f"{self.dev} 回复 CMD_SUM 校验失败")
+            if self.checksum(header[:4]) != cmd_sum:
+                last_error = ChecksumError(f"{self.dev} 回复 CMD_SUM 校验失败")
+                continue
 
-        if cmd != expected_cmd:
-            raise ResponseError(f"{self.dev} 回复命令不匹配: 期望 0x{expected_cmd:02X}, 实际 0x{cmd:02X}")
-        if motor_id != expected_id:
-            raise ResponseError(f"{self.dev} 回复 ID 不匹配: 期望 {expected_id}, 实际 {motor_id}")
+            if data_len == 0:
+                if cmd == expected_cmd and motor_id == expected_id:
+                    self._last_reply_ms = (time.perf_counter() - t0) * 1000.0
+                    return b""
+                last_error = ResponseError(
+                    f"{self.dev} 收到非目标空回复: 期望 cmd=0x{expected_cmd:02X}/id={expected_id}, 实际 cmd=0x{cmd:02X}/id={motor_id}"
+                )
+                continue
 
-        if data_len == 0:
-            return b""
+            payload = frame[5:-1]
+            data_sum = frame[-1]
+            if self.checksum(payload) != data_sum:
+                last_error = ChecksumError(f"{self.dev} 回复 DATA_SUM 校验失败")
+                continue
 
-        data_block = self.read_exact(data_len + 1)
-        payload = data_block[:-1]
-        data_sum = data_block[-1]
-        if self.checksum(payload) != data_sum:
-            raise ChecksumError(f"{self.dev} 回复 DATA_SUM 校验失败")
+            if cmd != expected_cmd or motor_id != expected_id:
+                last_error = ResponseError(
+                    f"{self.dev} 收到非目标回复: 期望 cmd=0x{expected_cmd:02X}/id={expected_id}, 实际 cmd=0x{cmd:02X}/id={motor_id}"
+                )
+                continue
 
-        return payload
+            self._last_reply_ms = (time.perf_counter() - t0) * 1000.0
+            return payload
+
+        if last_error is not None:
+            raise last_error
+        raise ResponseError(f"{self.dev} 回复超时")
+
+    def get_last_io_timing(self) -> Dict[str, float]:
+        return {
+            "flush_ms": float(self._last_flush_ms),
+            "flush_bytes": int(self._last_flush_bytes),
+            "send_ms": float(self._last_send_ms),
+            "reply_ms": float(self._last_reply_ms),
+        }
 
 
 class LkMotor:

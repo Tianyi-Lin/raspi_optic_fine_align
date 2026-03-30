@@ -858,6 +858,9 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
         debug_timing = bool(settings.get("control_debug_timing", False))
         if debug_timing and (now - last_timing_push) >= 0.8:
             try:
+                brushless_timing = {}
+                if servo is not None and hasattr(servo, "get_timing_snapshot"):
+                    brushless_timing = servo.get_timing_snapshot(reset=True)
                 status_queue.put_nowait(
                     (
                         "ctrl_timing",
@@ -871,6 +874,7 @@ def _control_process_main(stop_event, settings_queue, cmd_queue, status_queue, l
                             "servo_write_ms": (t_servo_write_end - t_imu_read_end) * 1000.0,
                             "work_ms": work_ms,
                             "sleep_ms": sleep_ms,
+                            "brushless": brushless_timing,
                         },
                     )
                 )
@@ -1027,9 +1031,224 @@ class BrushlessDualServoAdapter:
         self._pending_pan_deg = 0.0
         self._pending_tilt_deg = 0.0
         self.parallel_write = False
+        self._last_sent_pan_key = None
+        self._last_sent_tilt_key = None
+        self._timing_lock = threading.Lock()
+        self._timing_stats = self._new_timing_stats()
+        self._parallel_stop_event = threading.Event()
+        self._pan_move_queue = queue.Queue()
+        self._tilt_move_queue = queue.Queue()
+        self._pan_worker = threading.Thread(
+            target=self._axis_move_worker,
+            args=("pan", self._pan_move_queue),
+            daemon=True,
+        )
+        self._tilt_worker = threading.Thread(
+            target=self._axis_move_worker,
+            args=("tilt", self._tilt_move_queue),
+            daemon=True,
+        )
+        self._pan_worker.start()
+        self._tilt_worker.start()
         self.pan_motor.motor_run()
         time.sleep(0.03)
         self.tilt_motor.motor_run()
+
+    @staticmethod
+    def _new_timing_stats():
+        return {
+            "samples": 0,
+            "wall_ms_total": 0.0,
+            "pan_ms_total": 0.0,
+            "tilt_ms_total": 0.0,
+            "pan_send_ms_total": 0.0,
+            "pan_reply_ms_total": 0.0,
+            "pan_flush_ms_total": 0.0,
+            "pan_flush_bytes_total": 0,
+            "tilt_send_ms_total": 0.0,
+            "tilt_reply_ms_total": 0.0,
+            "tilt_flush_ms_total": 0.0,
+            "tilt_flush_bytes_total": 0,
+            "skip_total": 0,
+            "pan_skip_total": 0,
+            "tilt_skip_total": 0,
+            "error_total": 0,
+            "reset_total": 0,
+            "parallel_samples": 0,
+            "last_wall_ms": 0.0,
+            "last_pan_ms": 0.0,
+            "last_tilt_ms": 0.0,
+            "last_pan_send_ms": 0.0,
+            "last_pan_reply_ms": 0.0,
+            "last_pan_flush_ms": 0.0,
+            "last_pan_flush_bytes": 0,
+            "last_tilt_send_ms": 0.0,
+            "last_tilt_reply_ms": 0.0,
+            "last_tilt_flush_ms": 0.0,
+            "last_tilt_flush_bytes": 0,
+            "last_pan_skipped": False,
+            "last_tilt_skipped": False,
+            "last_parallel": False,
+        }
+
+    @staticmethod
+    def _cmd_key(motor, target_deg, speed_dps):
+        angle_raw = motor._deg_to_proto(float(target_deg))
+        speed_raw = motor._speed_to_proto(float(speed_dps))
+        return angle_raw, speed_raw
+
+    @staticmethod
+    def _motor_io_timing(motor):
+        getter = getattr(getattr(motor, "port", None), "get_last_io_timing", None)
+        if callable(getter):
+            try:
+                return getter()
+            except Exception:
+                pass
+        return {"flush_ms": 0.0, "flush_bytes": 0, "send_ms": 0.0, "reply_ms": 0.0}
+
+    def _axis_move_worker(self, axis, work_queue):
+        while not self._parallel_stop_event.is_set():
+            try:
+                request = work_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            if request is None:
+                break
+            motor = request.get("motor")
+            result = {"wall_ms": 0.0, "flush_ms": 0.0, "flush_bytes": 0, "send_ms": 0.0, "reply_ms": 0.0, "exc": None}
+            t0 = time.perf_counter()
+            try:
+                motor.move_to_deg(request["target_deg"], max_speed_dps=request["speed_dps"])
+                io = self._motor_io_timing(motor)
+                result["wall_ms"] = (time.perf_counter() - t0) * 1000.0
+                result["flush_ms"] = float(io.get("flush_ms", 0.0))
+                result["flush_bytes"] = int(io.get("flush_bytes", 0))
+                result["send_ms"] = float(io.get("send_ms", 0.0))
+                result["reply_ms"] = float(io.get("reply_ms", 0.0))
+            except Exception as exc:
+                result["exc"] = exc
+            request["result"] = result
+            request["done"].set()
+
+    def _submit_axis_move(self, axis, motor, target_deg, speed_dps):
+        request = {
+            "axis": axis,
+            "motor": motor,
+            "target_deg": float(target_deg),
+            "speed_dps": float(speed_dps),
+            "done": threading.Event(),
+            "result": None,
+        }
+        if axis == "pan":
+            self._pan_move_queue.put(request)
+        else:
+            self._tilt_move_queue.put(request)
+        return request
+
+    def _dispatch_parallel_move(self, pan_skipped, tilt_skipped):
+        pan_request = None
+        tilt_request = None
+        if not pan_skipped:
+            pan_request = self._submit_axis_move(
+                "pan",
+                self.pan_motor,
+                self._pending_pan_deg,
+                self.pan_speed_dps,
+            )
+        if not tilt_skipped:
+            if pan_request is not None:
+                time.sleep(0.002)
+            tilt_request = self._submit_axis_move(
+                "tilt",
+                self.tilt_motor,
+                self._pending_tilt_deg,
+                self.tilt_speed_dps,
+            )
+        if pan_request is not None:
+            pan_request["done"].wait()
+        if tilt_request is not None:
+            tilt_request["done"].wait()
+        pan_result = pan_request["result"] if pan_request is not None else {"wall_ms": 0.0, "flush_ms": 0.0, "flush_bytes": 0, "send_ms": 0.0, "reply_ms": 0.0, "exc": None}
+        tilt_result = tilt_request["result"] if tilt_request is not None else {"wall_ms": 0.0, "flush_ms": 0.0, "flush_bytes": 0, "send_ms": 0.0, "reply_ms": 0.0, "exc": None}
+        return pan_result, tilt_result
+
+    def _record_move_timing(self, data):
+        with self._timing_lock:
+            stats = self._timing_stats
+            stats["samples"] += 1
+            stats["wall_ms_total"] += float(data.get("wall_ms", 0.0))
+            stats["pan_ms_total"] += float(data.get("pan_ms", 0.0))
+            stats["tilt_ms_total"] += float(data.get("tilt_ms", 0.0))
+            stats["pan_send_ms_total"] += float(data.get("pan_send_ms", 0.0))
+            stats["pan_reply_ms_total"] += float(data.get("pan_reply_ms", 0.0))
+            stats["pan_flush_ms_total"] += float(data.get("pan_flush_ms", 0.0))
+            stats["pan_flush_bytes_total"] += int(data.get("pan_flush_bytes", 0))
+            stats["tilt_send_ms_total"] += float(data.get("tilt_send_ms", 0.0))
+            stats["tilt_reply_ms_total"] += float(data.get("tilt_reply_ms", 0.0))
+            stats["tilt_flush_ms_total"] += float(data.get("tilt_flush_ms", 0.0))
+            stats["tilt_flush_bytes_total"] += int(data.get("tilt_flush_bytes", 0))
+            stats["skip_total"] += int(bool(data.get("pan_skipped"))) + int(bool(data.get("tilt_skipped")))
+            stats["pan_skip_total"] += int(bool(data.get("pan_skipped")))
+            stats["tilt_skip_total"] += int(bool(data.get("tilt_skipped")))
+            stats["error_total"] += int(bool(data.get("had_error")))
+            stats["reset_total"] += int(data.get("reset_count", 0))
+            stats["parallel_samples"] += int(bool(data.get("parallel")))
+            stats["last_wall_ms"] = float(data.get("wall_ms", 0.0))
+            stats["last_pan_ms"] = float(data.get("pan_ms", 0.0))
+            stats["last_tilt_ms"] = float(data.get("tilt_ms", 0.0))
+            stats["last_pan_send_ms"] = float(data.get("pan_send_ms", 0.0))
+            stats["last_pan_reply_ms"] = float(data.get("pan_reply_ms", 0.0))
+            stats["last_pan_flush_ms"] = float(data.get("pan_flush_ms", 0.0))
+            stats["last_pan_flush_bytes"] = int(data.get("pan_flush_bytes", 0))
+            stats["last_tilt_send_ms"] = float(data.get("tilt_send_ms", 0.0))
+            stats["last_tilt_reply_ms"] = float(data.get("tilt_reply_ms", 0.0))
+            stats["last_tilt_flush_ms"] = float(data.get("tilt_flush_ms", 0.0))
+            stats["last_tilt_flush_bytes"] = int(data.get("tilt_flush_bytes", 0))
+            stats["last_pan_skipped"] = bool(data.get("pan_skipped"))
+            stats["last_tilt_skipped"] = bool(data.get("tilt_skipped"))
+            stats["last_parallel"] = bool(data.get("parallel"))
+
+    def get_timing_snapshot(self, reset=True):
+        with self._timing_lock:
+            stats = dict(self._timing_stats)
+            if reset:
+                self._timing_stats = self._new_timing_stats()
+        samples = max(1, int(stats.get("samples", 0)))
+        return {
+            "samples": int(stats.get("samples", 0)),
+            "avg_wall_ms": float(stats.get("wall_ms_total", 0.0)) / samples,
+            "avg_pan_ms": float(stats.get("pan_ms_total", 0.0)) / samples,
+            "avg_tilt_ms": float(stats.get("tilt_ms_total", 0.0)) / samples,
+            "avg_pan_send_ms": float(stats.get("pan_send_ms_total", 0.0)) / samples,
+            "avg_pan_reply_ms": float(stats.get("pan_reply_ms_total", 0.0)) / samples,
+            "avg_pan_flush_ms": float(stats.get("pan_flush_ms_total", 0.0)) / samples,
+            "avg_pan_flush_bytes": float(stats.get("pan_flush_bytes_total", 0)) / samples,
+            "avg_tilt_send_ms": float(stats.get("tilt_send_ms_total", 0.0)) / samples,
+            "avg_tilt_reply_ms": float(stats.get("tilt_reply_ms_total", 0.0)) / samples,
+            "avg_tilt_flush_ms": float(stats.get("tilt_flush_ms_total", 0.0)) / samples,
+            "avg_tilt_flush_bytes": float(stats.get("tilt_flush_bytes_total", 0)) / samples,
+            "skip_total": int(stats.get("skip_total", 0)),
+            "pan_skip_total": int(stats.get("pan_skip_total", 0)),
+            "tilt_skip_total": int(stats.get("tilt_skip_total", 0)),
+            "error_total": int(stats.get("error_total", 0)),
+            "reset_total": int(stats.get("reset_total", 0)),
+            "parallel_ratio": float(stats.get("parallel_samples", 0)) / samples,
+            "last_wall_ms": float(stats.get("last_wall_ms", 0.0)),
+            "last_pan_ms": float(stats.get("last_pan_ms", 0.0)),
+            "last_tilt_ms": float(stats.get("last_tilt_ms", 0.0)),
+            "last_pan_send_ms": float(stats.get("last_pan_send_ms", 0.0)),
+            "last_pan_reply_ms": float(stats.get("last_pan_reply_ms", 0.0)),
+            "last_pan_flush_ms": float(stats.get("last_pan_flush_ms", 0.0)),
+            "last_pan_flush_bytes": int(stats.get("last_pan_flush_bytes", 0)),
+            "last_tilt_send_ms": float(stats.get("last_tilt_send_ms", 0.0)),
+            "last_tilt_reply_ms": float(stats.get("last_tilt_reply_ms", 0.0)),
+            "last_tilt_flush_ms": float(stats.get("last_tilt_flush_ms", 0.0)),
+            "last_tilt_flush_bytes": int(stats.get("last_tilt_flush_bytes", 0)),
+            "last_pan_skipped": bool(stats.get("last_pan_skipped", False)),
+            "last_tilt_skipped": bool(stats.get("last_tilt_skipped", False)),
+            "last_parallel": bool(stats.get("last_parallel", False)),
+        }
 
     def _reset_axis_motor(self, axis: str):
         if axis == "pan":
@@ -1047,8 +1266,10 @@ class BrushlessDualServoAdapter:
         time.sleep(0.03)
         if axis == "pan":
             self.pan_motor = m
+            self._last_sent_pan_key = None
         else:
             self.tilt_motor = m
+            self._last_sent_tilt_key = None
 
     def set_angles(self, angles):
         if self.pan_id == self.tilt_id:
@@ -1066,49 +1287,156 @@ class BrushlessDualServoAdapter:
                 self._pending_tilt_deg = float(angle)
 
     def move_angle(self, wait=True):
+        move_start = time.perf_counter()
+        pan_key = self._cmd_key(self.pan_motor, self._pending_pan_deg, self.pan_speed_dps)
+        tilt_key = self._cmd_key(self.tilt_motor, self._pending_tilt_deg, self.tilt_speed_dps)
+        pan_skipped = pan_key == self._last_sent_pan_key
+        tilt_skipped = tilt_key == self._last_sent_tilt_key
+        pan_info = {"wall_ms": 0.0, "flush_ms": 0.0, "flush_bytes": 0, "send_ms": 0.0, "reply_ms": 0.0}
+        tilt_info = {"wall_ms": 0.0, "flush_ms": 0.0, "flush_bytes": 0, "send_ms": 0.0, "reply_ms": 0.0}
+        reset_count = 0
         if bool(getattr(self, "parallel_write", False)):
-            pan_exc = None
-            tilt_exc = None
-
-            def _move_pan():
-                nonlocal pan_exc
-                try:
-                    self.pan_motor.move_to_deg(self._pending_pan_deg, max_speed_dps=self.pan_speed_dps)
-                except Exception as exc:
-                    pan_exc = exc
-
-            def _move_tilt():
-                nonlocal tilt_exc
-                try:
-                    self.tilt_motor.move_to_deg(self._pending_tilt_deg, max_speed_dps=self.tilt_speed_dps)
-                except Exception as exc:
-                    tilt_exc = exc
-
-            t1 = threading.Thread(target=_move_pan, daemon=True)
-            t2 = threading.Thread(target=_move_tilt, daemon=True)
-            t1.start()
-            time.sleep(0.002)
-            t2.start()
-            t1.join()
-            t2.join()
+            pan_result, tilt_result = self._dispatch_parallel_move(pan_skipped, tilt_skipped)
+            pan_exc = pan_result.get("exc")
+            tilt_exc = tilt_result.get("exc")
+            pan_info = {
+                "wall_ms": float(pan_result.get("wall_ms", 0.0)),
+                "flush_ms": float(pan_result.get("flush_ms", 0.0)),
+                "flush_bytes": int(pan_result.get("flush_bytes", 0)),
+                "send_ms": float(pan_result.get("send_ms", 0.0)),
+                "reply_ms": float(pan_result.get("reply_ms", 0.0)),
+            }
+            tilt_info = {
+                "wall_ms": float(tilt_result.get("wall_ms", 0.0)),
+                "flush_ms": float(tilt_result.get("flush_ms", 0.0)),
+                "flush_bytes": int(tilt_result.get("flush_bytes", 0)),
+                "send_ms": float(tilt_result.get("send_ms", 0.0)),
+                "reply_ms": float(tilt_result.get("reply_ms", 0.0)),
+            }
             if pan_exc is not None:
                 self._reset_axis_motor("pan")
+                reset_count += 1
             if tilt_exc is not None:
                 self._reset_axis_motor("tilt")
+                reset_count += 1
+            move_data = {
+                "parallel": True,
+                "wall_ms": (time.perf_counter() - move_start) * 1000.0,
+                "pan_ms": float(pan_info.get("wall_ms", 0.0)),
+                "tilt_ms": float(tilt_info.get("wall_ms", 0.0)),
+                "pan_flush_ms": float(pan_info.get("flush_ms", 0.0)),
+                "pan_flush_bytes": int(pan_info.get("flush_bytes", 0)),
+                "pan_send_ms": float(pan_info.get("send_ms", 0.0)),
+                "pan_reply_ms": float(pan_info.get("reply_ms", 0.0)),
+                "tilt_flush_ms": float(tilt_info.get("flush_ms", 0.0)),
+                "tilt_flush_bytes": int(tilt_info.get("flush_bytes", 0)),
+                "tilt_send_ms": float(tilt_info.get("send_ms", 0.0)),
+                "tilt_reply_ms": float(tilt_info.get("reply_ms", 0.0)),
+                "pan_skipped": pan_skipped,
+                "tilt_skipped": tilt_skipped,
+                "had_error": pan_exc is not None or tilt_exc is not None,
+                "reset_count": reset_count,
+            }
+            self._record_move_timing(move_data)
             if pan_exc is not None or tilt_exc is not None:
                 raise RuntimeError(f"brushless move failed: pan={pan_exc} tilt={tilt_exc}")
         else:
             try:
-                self.pan_motor.move_to_deg(self._pending_pan_deg, max_speed_dps=self.pan_speed_dps)
+                if not pan_skipped:
+                    t0 = time.perf_counter()
+                    self.pan_motor.move_to_deg(self._pending_pan_deg, max_speed_dps=self.pan_speed_dps)
+                    io = self._motor_io_timing(self.pan_motor)
+                    pan_info = {
+                        "wall_ms": (time.perf_counter() - t0) * 1000.0,
+                        "flush_ms": float(io.get("flush_ms", 0.0)),
+                        "flush_bytes": int(io.get("flush_bytes", 0)),
+                        "send_ms": float(io.get("send_ms", 0.0)),
+                        "reply_ms": float(io.get("reply_ms", 0.0)),
+                    }
             except Exception as exc:
                 self._reset_axis_motor("pan")
+                self._record_move_timing(
+                    {
+                        "parallel": False,
+                        "wall_ms": (time.perf_counter() - move_start) * 1000.0,
+                        "pan_ms": float(pan_info.get("wall_ms", 0.0)),
+                        "tilt_ms": 0.0,
+                        "pan_flush_ms": float(pan_info.get("flush_ms", 0.0)),
+                        "pan_flush_bytes": int(pan_info.get("flush_bytes", 0)),
+                        "pan_send_ms": float(pan_info.get("send_ms", 0.0)),
+                        "pan_reply_ms": float(pan_info.get("reply_ms", 0.0)),
+                        "tilt_flush_ms": 0.0,
+                        "tilt_flush_bytes": 0,
+                        "tilt_send_ms": 0.0,
+                        "tilt_reply_ms": 0.0,
+                        "pan_skipped": pan_skipped,
+                        "tilt_skipped": tilt_skipped,
+                        "had_error": True,
+                        "reset_count": 1,
+                    }
+                )
                 raise RuntimeError(f"brushless pan move failed: {exc}")
-            time.sleep(0.005)
+            if not pan_skipped and not tilt_skipped:
+                time.sleep(0.005)
             try:
-                self.tilt_motor.move_to_deg(self._pending_tilt_deg, max_speed_dps=self.tilt_speed_dps)
+                if not tilt_skipped:
+                    t0 = time.perf_counter()
+                    self.tilt_motor.move_to_deg(self._pending_tilt_deg, max_speed_dps=self.tilt_speed_dps)
+                    io = self._motor_io_timing(self.tilt_motor)
+                    tilt_info = {
+                        "wall_ms": (time.perf_counter() - t0) * 1000.0,
+                        "flush_ms": float(io.get("flush_ms", 0.0)),
+                        "flush_bytes": int(io.get("flush_bytes", 0)),
+                        "send_ms": float(io.get("send_ms", 0.0)),
+                        "reply_ms": float(io.get("reply_ms", 0.0)),
+                    }
             except Exception as exc:
                 self._reset_axis_motor("tilt")
+                self._record_move_timing(
+                    {
+                        "parallel": False,
+                        "wall_ms": (time.perf_counter() - move_start) * 1000.0,
+                        "pan_ms": float(pan_info.get("wall_ms", 0.0)),
+                        "tilt_ms": float(tilt_info.get("wall_ms", 0.0)),
+                        "pan_flush_ms": float(pan_info.get("flush_ms", 0.0)),
+                        "pan_flush_bytes": int(pan_info.get("flush_bytes", 0)),
+                        "pan_send_ms": float(pan_info.get("send_ms", 0.0)),
+                        "pan_reply_ms": float(pan_info.get("reply_ms", 0.0)),
+                        "tilt_flush_ms": float(tilt_info.get("flush_ms", 0.0)),
+                        "tilt_flush_bytes": int(tilt_info.get("flush_bytes", 0)),
+                        "tilt_send_ms": float(tilt_info.get("send_ms", 0.0)),
+                        "tilt_reply_ms": float(tilt_info.get("reply_ms", 0.0)),
+                        "pan_skipped": pan_skipped,
+                        "tilt_skipped": tilt_skipped,
+                        "had_error": True,
+                        "reset_count": 1,
+                    }
+                )
                 raise RuntimeError(f"brushless tilt move failed: {exc}")
+            self._record_move_timing(
+                {
+                    "parallel": False,
+                    "wall_ms": (time.perf_counter() - move_start) * 1000.0,
+                    "pan_ms": float(pan_info.get("wall_ms", 0.0)),
+                    "tilt_ms": float(tilt_info.get("wall_ms", 0.0)),
+                    "pan_flush_ms": float(pan_info.get("flush_ms", 0.0)),
+                    "pan_flush_bytes": int(pan_info.get("flush_bytes", 0)),
+                    "pan_send_ms": float(pan_info.get("send_ms", 0.0)),
+                    "pan_reply_ms": float(pan_info.get("reply_ms", 0.0)),
+                    "tilt_flush_ms": float(tilt_info.get("flush_ms", 0.0)),
+                    "tilt_flush_bytes": int(tilt_info.get("flush_bytes", 0)),
+                    "tilt_send_ms": float(tilt_info.get("send_ms", 0.0)),
+                    "tilt_reply_ms": float(tilt_info.get("reply_ms", 0.0)),
+                    "pan_skipped": pan_skipped,
+                    "tilt_skipped": tilt_skipped,
+                    "had_error": False,
+                    "reset_count": 0,
+                }
+            )
+        if not pan_skipped:
+            self._last_sent_pan_key = pan_key
+        if not tilt_skipped:
+            self._last_sent_tilt_key = tilt_key
         if wait:
             time.sleep(0.01)
 
@@ -1118,6 +1446,23 @@ class BrushlessDualServoAdapter:
         return [(self.pan_id, pan), (self.tilt_id, tilt)]
 
     def cleanup(self):
+        self._parallel_stop_event.set()
+        try:
+            self._pan_move_queue.put_nowait(None)
+        except Exception:
+            pass
+        try:
+            self._tilt_move_queue.put_nowait(None)
+        except Exception:
+            pass
+        try:
+            self._pan_worker.join(timeout=0.5)
+        except Exception:
+            pass
+        try:
+            self._tilt_worker.join(timeout=0.5)
+        except Exception:
+            pass
         try:
             self.pan_motor.motor_stop()
         except Exception:
@@ -3883,6 +4228,21 @@ class CircleTrackerGUI:
                         self.mp_det_update_age = float(val)
                     elif key == "ctrl_timing":
                         try:
+                            brushless = val.get("brushless") or {}
+                            brushless_text = ""
+                            if int(brushless.get("samples", 0)) > 0:
+                                brushless_text = (
+                                    f" br(avg={float(brushless.get('avg_wall_ms', 0.0)):.1f}"
+                                    f"/pan={float(brushless.get('avg_pan_ms', 0.0)):.1f}"
+                                    f"/tilt={float(brushless.get('avg_tilt_ms', 0.0)):.1f}ms"
+                                    f" fl={float(brushless.get('avg_pan_flush_ms', 0.0)):.2f}/{float(brushless.get('avg_tilt_flush_ms', 0.0)):.2f}ms"
+                                    f" fb={float(brushless.get('avg_pan_flush_bytes', 0.0)):.1f}/{float(brushless.get('avg_tilt_flush_bytes', 0.0)):.1f}B"
+                                    f" io={float(brushless.get('avg_pan_send_ms', 0.0)):.1f}+{float(brushless.get('avg_pan_reply_ms', 0.0)):.1f}"
+                                    f"/{float(brushless.get('avg_tilt_send_ms', 0.0)):.1f}+{float(brushless.get('avg_tilt_reply_ms', 0.0)):.1f}"
+                                    f" skip={int(brushless.get('pan_skip_total', 0))}/{int(brushless.get('tilt_skip_total', 0))}"
+                                    f" rst={int(brushless.get('reset_total', 0))}"
+                                    f" par={float(brushless.get('parallel_ratio', 0.0)):.2f})"
+                                )
                             self.mp_ctrl_timing = (
                                 f"cmd={float(val.get('cmd_ms', 0.0)):.1f}ms "
                                 f"set={float(val.get('settings_ms', 0.0)):.1f}ms "
@@ -3892,6 +4252,7 @@ class CircleTrackerGUI:
                                 f"write={float(val.get('servo_write_ms', 0.0)):.1f}ms "
                                 f"work={float(val.get('work_ms', 0.0)):.1f}ms "
                                 f"sleep={float(val.get('sleep_ms', 0.0)):.1f}ms"
+                                f"{brushless_text}"
                             )
                         except Exception:
                             self.mp_ctrl_timing = ""
